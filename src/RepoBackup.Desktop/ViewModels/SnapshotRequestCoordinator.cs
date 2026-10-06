@@ -10,11 +10,12 @@ public sealed class SnapshotRequestCoordinator
     public void Cancel() { current?.Cancel(); current = null; }
     public bool Accepts(Request request, string identity) => ReferenceEquals(current, request) && !request.Token.IsCancellationRequested && request.Identity == identity;
 
-    public sealed class Request(string identity) : IDisposable
+    public sealed class Request : IDisposable
     {
         private readonly CancellationTokenSource cancellation = new();
-        public string Identity { get; } = identity;
-        public CancellationToken Token => cancellation.Token;
+        public Request(string identity) { Identity = identity; Token = cancellation.Token; }
+        public string Identity { get; }
+        public CancellationToken Token { get; }
         private bool disposed;
         public void Cancel() { if (!disposed) cancellation.Cancel(); }
         public void Dispose() { disposed = true; cancellation.Dispose(); }

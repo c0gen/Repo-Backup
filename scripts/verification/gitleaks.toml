@@ -1,0 +1,3 @@
+# Use the pinned scanner's complete built-in rules, with no repository allowlist.
+[extend]
+useDefault = true

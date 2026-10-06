@@ -14,7 +14,7 @@ $taskRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $taskSdk = & (Join-Path $PSScriptRoot 'Bootstrap.ps1')
 Push-Location $taskRoot
 try {
-    & $taskSdk restore 'RepoBackup.slnx' --disable-parallel --disable-build-servers -m:1 -v minimal
+    & $taskSdk restore 'RepoBackup.slnx' --locked-mode --disable-parallel --disable-build-servers -m:1 -v minimal
     if ($LASTEXITCODE -ne 0) { throw 'Dependency restore failed.' }
     & $taskSdk build 'RepoBackup.slnx' -c $Configuration --no-restore --disable-build-servers -m:1 -v minimal "-p:Version=$($taskVersion.Version)"
     if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }

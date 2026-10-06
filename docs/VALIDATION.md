@@ -5,14 +5,14 @@ The application is built on Windows with the pinned .NET SDK and restic release.
 ## Reproduce
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\Build.ps1 -Test -WindowsIntegration -Publish
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify.ps1 -Package
 ```
 
 Use `--unit` on the test executable for catalog, discovery, CLI and native hook checks. Use `--edge-only` for those checks plus link, low-space, live-change and external Git-data tests. Build the whole solution first so the CLI and hidden runner fixtures are available. Junction creation requires an environment permitting Windows reparse points.
 
 Use `--destinations-only` for desktop workflow, protection/export, and core/CLI destination checks without repeating the full backup and retention suites. Combine it with `--windows-integration` to include temporary schedule creation, repeated editing, and missing-task removal. Use `--reliability-only` for exact restore, cancellation/finalization, moved-root recovery, and reactivation regressions.
 
-Build release installers with `scripts/Build.ps1 -Test -Installer`. Run `scripts/Test-Package.ps1` to verify the actual ZIP and packaged backup/restore, hidden runner, and desktop with system Git/.NET discovery disabled. Include `-Installer` on a clean Windows runner to check setup, reinstall, uninstall, and preserved user data. See [Packaging and releases](PACKAGING.md) for commands and CI behavior.
+`Verify.ps1` includes redacted secret scanning, live transitive NuGet auditing, negative security-gate fixtures, the full acceptance suite, and restic 0.18.0 repository compatibility checks. `-Package` builds and tests the portable ZIP; use `-Installer` on a clean Windows machine to also build and test setup, reinstall, uninstall, and preserved user data. Direct `Build.ps1` and `Test-Package.ps1` commands remain available for focused checks. See [Security maintenance](SECURITY.md) and [Packaging and releases](PACKAGING.md).
 
 ## Acceptance coverage
 
@@ -47,10 +47,20 @@ Hook tests invoke the documented payload contracts through actual PowerShell and
 
 Live coverage detects observed metadata changes and read failures; it cannot promise every file represents one instant. VSS is explicitly selected, requires Administrator rights, and does not silently fall back to live mode.
 
-## Verified run: October 6, 2026
+## Earlier validation: October 6, 2026
 
 The Release build completed with zero warnings and zero errors. The complete acceptance suite, including native PowerShell/runner callbacks and the temporary Windows scheduled task, completed with **76 passed, 0 failed**. Projects, Discoveries and Settings rendered from the real WPF visual tree with no binding errors. A read-only discovery smoke test against installed program metadata found all three providers and enrolled no projects; an unavailable Antigravity workspace reference produced the expected warning.
 
 Native hook configuration was not installed into user settings during validation. Actual agent callbacks remain an opt-in verification step after installation and native review.
 
 Following the VS Code/assistant-extension discovery update, the Release build again completed with zero warnings and zero errors. The expanded `--unit` suite completed with **68 passed, 0 failed**, including extension-only Codex metadata, shared desktop/database project IDs, committed WAL reads, VS Code Stable/Insiders/profiles, source attribution, bounded Copilot headers, CLI overrides, native hook compatibility and the isolated junction fixture. This subsequent run used synthetic metadata and did not install hooks into user settings or back up user projects.
+
+## Bug and usability fix validation: October 6, 2026
+
+The final Release build completed with **zero warnings and zero errors**. The complete acceptance suite with `--windows-integration` completed with **164 passed, 0 failed**. Focused runs also passed: **14 reliability regressions** and **25 desktop/destination checks**, including temporary Windows schedule creation, repeated saves, and deletion of imported schedules with no task. All fixture tasks were removed.
+
+The full suite retained backup/restore, working-file hash, original-source integrity, retention, catalog migration, discovery/hook, external Git-data, and replacement-computer recovery checks. Exact bracketed file/folder and individual-file selection restores, missing/no-op restores, cancellations between projects and during finalization/cleanup, tagging failures, moved-root metadata, local edit preservation, invalid newest-manifest fallback, and transaction rollback passed.
+
+All six desktop pages rendered at 1140×730 and 1500×960, with 100% and 150% rendering scale and no binding errors. Tab navigation reached the destination and both primary backup actions. Destination controls disabled during repository verification, and its failure remained visible after the information dialog returned. Two-destination protection, delayed snapshot/file responses, filtered toggling/hidden counts, full preview warnings, dismissed-project reactivation, and independent schedule destination/scope persistence passed.
+
+Final artifacts: `.artifacts/tests/20261006-165410-77f10f/`. Full run log: `.artifacts/bugfix-acceptance-final.log`. Desktop PNGs are under the artifact directory's `desktop-destinations/workflow/` folder. Repository formats, recovery manifest version, catalog schema, and CLI command syntax remain unchanged.

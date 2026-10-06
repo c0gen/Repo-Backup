@@ -9,6 +9,16 @@ public sealed partial class MainViewModel
     private bool useVss;
     public bool UseVss { get => useVss; set { if (Set(ref useVss, value)) Services.Catalog.SaveSetting("useVss", value); } }
     public ScheduleEditorState ScheduleEditor { get; } = new();
+    public Destination? SelectedScheduleDestination
+    {
+        get => ScheduleDestinations.FirstOrDefault(d => d.Id == ScheduleEditor.DestinationId);
+        set => ScheduleEditor.DestinationId = value?.Id;
+    }
+    public SelectionOption? SelectedScheduleScope
+    {
+        get => ScheduleScopes.FirstOrDefault(s => s.Selection?.Id == ScheduleEditor.SelectionId);
+        set => ScheduleEditor.SelectionId = value?.Selection?.Id;
+    }
     public System.Windows.Input.ICommand NewScheduleCommand { get; private set; } = null!;
     private ScheduleDefinition? selectedSchedule;
     public ScheduleDefinition? SelectedSchedule
@@ -23,44 +33,45 @@ public sealed partial class MainViewModel
     }
     public string DataPath => Services.Paths.DataDirectory;
     public string EngineVersion => "restic " + Core.Backup.ResticClient.Version + " · checksum verified at every operation";
-    public string CodexHookStatus => DiscoveryHookInstaller.Status(Services.Catalog, DiscoveryProviders.Codex);
-    public string ClaudeHookStatus => DiscoveryHookInstaller.Status(Services.Catalog, DiscoveryProviders.ClaudeCode);
-    public string AntigravityHookStatus => DiscoveryHookInstaller.Status(Services.Catalog, DiscoveryProviders.Antigravity);
+    private string codexHookStatus = "Loading…", claudeHookStatus = "Loading…", antigravityHookStatus = "Loading…";
+    public string CodexHookStatus => codexHookStatus;
+    public string ClaudeHookStatus => claudeHookStatus;
+    public string AntigravityHookStatus => antigravityHookStatus;
 
     private void RaiseHookStatus()
     {
         Raise(nameof(CodexHookStatus)); Raise(nameof(ClaudeHookStatus)); Raise(nameof(AntigravityHookStatus));
     }
 
-    private Task InstallDiscoveryHookAsync(string provider)
+    private async Task InstallDiscoveryHookAsync(string provider)
     {
-        DiscoveryHookInstaller.Install(provider, Services.Catalog, Services.Paths.DataDirectory);
+        await Task.Run(() => DiscoveryHookInstaller.Install(provider, Services.Catalog, Services.Paths.DataDirectory));
+        await ReloadAsync();
         RaiseHookStatus(); StatusMessage = DiscoveryProviders.DisplayName(provider) + " hook configured; awaiting verification.";
         dialogs.Information("The hook records review candidates. Existing configuration was preserved. " + DiscoveryHookInstaller.Instructions(provider));
-        return Task.CompletedTask;
     }
     private void InitializeSettingsCommands()
     {
-        useVss = Services.Catalog.GetSetting<bool>("useVss");
-        ExportCatalogCommand = Command(async () => { var path = dialogs.Save("Export catalog — credentials are excluded", "RepoBackup-catalog.json", "JSON|*.json"); if (path is not null) { await File.WriteAllTextAsync(path, Services.Catalog.Export()); StatusMessage = "Catalog exported without credentials. Schedules import disabled."; } });
-        ImportCatalogCommand = Command(async () => { var path = dialogs.Open("Import a Repo Backup catalog", "JSON|*.json"); if (path is not null) { Services.Catalog.Import(await File.ReadAllTextAsync(path)); Reload(); StatusMessage = "Catalog imported. Recovery keys must be supplied separately."; } });
+        ExportCatalogCommand = Command(async () => { var path = dialogs.Save("Export catalog — credentials are excluded", "RepoBackup-catalog.json", "JSON|*.json"); if (path is not null) { await File.WriteAllTextAsync(path, await Task.Run(Services.Catalog.Export)); StatusMessage = "Catalog exported without credentials. Schedules import disabled."; } });
+        ImportCatalogCommand = Command(async () => { var path = dialogs.Open("Import a Repo Backup catalog", "JSON|*.json"); if (path is not null) { var json = await File.ReadAllTextAsync(path); await Task.Run(() => Services.Catalog.Import(json)); await ReloadAsync(); StatusMessage = "Catalog imported. Recovery keys must be supplied separately."; } });
         InstallHookCommand = Command(() => InstallDiscoveryHookAsync(DiscoveryProviders.Codex));
         InstallClaudeHookCommand = Command(() => InstallDiscoveryHookAsync(DiscoveryProviders.ClaudeCode));
         InstallAntigravityHookCommand = Command(() => InstallDiscoveryHookAsync(DiscoveryProviders.Antigravity));
-        NewScheduleCommand = Command(() => { SelectedSchedule = null; ScheduleEditor.New(SelectedDestination?.Id); return Task.CompletedTask; });
+        NewScheduleCommand = Command(() => { SelectedSchedule = null; ScheduleEditor.New(SelectedDestination?.Id); return Task.CompletedTask; }, () => CanEditSchedule);
         SaveScheduleCommand = Command(async () =>
         {
             var schedule = ScheduleEditor.Build();
             await OperateAsync(async token =>
             {
-                await Services.Scheduler.SaveAsync(schedule, token); ScheduleEditor.Saved(schedule);
+                ProgressStage = "Saving schedule…";
+                await Task.Run(() => Services.Scheduler.SaveAsync(schedule, token), token); ScheduleEditor.Saved(schedule);
                 StatusMessage = schedule.Enabled ? "Schedule saved. Backups can run while the GUI is closed." : "Schedule saved disabled.";
             });
-        }, () => ScheduleEditor.DestinationId is not null);
+        }, () => CanEditSchedule && ScheduleEditor.DestinationId is not null);
         DeleteScheduleCommand = Command(async () =>
         {
             var id = SelectedSchedule!.Id;
-            await OperateAsync(async token => { await Services.Scheduler.DeleteAsync(id, token); SelectedSchedule = null; ScheduleEditor.New(SelectedDestination?.Id); StatusMessage = "Schedule removed."; });
-        }, () => SelectedSchedule is not null);
+            await OperateAsync(async token => { ProgressStage = "Removing schedule…"; await Task.Run(() => Services.Scheduler.DeleteAsync(id, token), token); SelectedSchedule = null; ScheduleEditor.New(SelectedDestination?.Id); StatusMessage = "Schedule removed."; });
+        }, () => CanEditSchedule && SelectedSchedule is not null);
     }
 }

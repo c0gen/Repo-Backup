@@ -5,6 +5,7 @@ namespace RepoBackup.Desktop.ViewModels;
 
 public sealed partial class MainViewModel
 {
+    public Func<Infrastructure.DestinationInput, CancellationToken, Task<Destination>>? DestinationCreator { get; set; }
     private void InitializeBackupCommands()
     {
         BackupAllCommand = Command(() => BackupAsync(true), () => SelectedDestination is not null && Projects.Any(p => p.Enabled));
@@ -12,17 +13,7 @@ public sealed partial class MainViewModel
         AddDestinationCommand = Command(async () =>
         {
             var dialog = dialogs.Destination(); if (dialog is null) return;
-            Destination? added = null;
-            await OperateAsync(async token =>
-            {
-                ProgressStage = dialog.OpenExisting ? "Opening repository" : "Creating repository";
-                added = await Services.Backups.AddDestinationAsync(dialog.DestinationName, dialog.DestinationPath, dialog.RecoveryKey, dialog.OpenExisting, token, dialog.Protection);
-                SelectedDestination = added;
-                StatusMessage = added.Protection == DestinationProtection.PasswordFree
-                    ? "Repository ready. No password or recovery key is needed to restore on another computer."
-                    : "Repository ready. Export a recovery key and store it separately.";
-            });
-            if (!dialog.OpenExisting && added?.Protection == DestinationProtection.RecoveryKey) await ExportRecoveryKeyAsync(added);
+            await AddDestinationAsync(dialog.Input);
         });
         VerifyCommand = Command(async () =>
         {
@@ -30,6 +21,20 @@ public sealed partial class MainViewModel
             await OperateAsync(async token => { ProgressStage = "Verifying all repository data"; var result = await Services.Backups.VerifyAsync(destination, token); StatusMessage = result.Message; dialogs.Information(result.Message); });
         }, () => SelectedDestination is not null);
         ExportKeyCommand = Command(() => ExportRecoveryKeyAsync(SelectedDestination!), () => SelectedDestination?.Protection == DestinationProtection.RecoveryKey);
+    }
+    public async Task AddDestinationAsync(Infrastructure.DestinationInput input)
+    {
+            Destination? added = null;
+            await OperateAsync(async token =>
+            {
+                ProgressStage = input.OpenExisting ? "Opening repository" : "Creating repository";
+                added = await (DestinationCreator?.Invoke(input, token) ?? Task.Run(() => Services.Backups.AddDestinationAsync(input.Name, input.Path, input.RecoveryKey, input.OpenExisting, token, input.Protection), token));
+                SelectedDestination = added;
+                StatusMessage = added.Protection == DestinationProtection.PasswordFree
+                    ? "Repository ready. No password or recovery key is needed to restore on another computer."
+                    : "Repository ready. Export a recovery key and store it separately.";
+            });
+            if (!input.OpenExisting && added?.Protection == DestinationProtection.RecoveryKey) await ExportRecoveryKeyAsync(added);
     }
     private async Task ExportRecoveryKeyAsync(Destination destination)
     {

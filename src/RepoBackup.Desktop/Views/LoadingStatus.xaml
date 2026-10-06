@@ -1,0 +1,17 @@
+<UserControl x:Class="RepoBackup.Desktop.Views.LoadingStatus" x:Name="StatusControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <StackPanel DataContext="{Binding ElementName=StatusControl}">
+    <StackPanel Margin="0,8" Visibility="{Binding State.IsLoading,Converter={StaticResource Visible}}" AutomationProperties.LiveSetting="Polite">
+      <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,8" />
+      <ProgressBar IsIndeterminate="True" Height="4" AutomationProperties.Name="{Binding Message}" />
+    </StackPanel>
+    <Border BorderBrush="#81662E" BorderThickness="1" Background="#2E291E" CornerRadius="5" Padding="12" Margin="0,8"
+            Visibility="{Binding State.HasError,Converter={StaticResource Visible}}" AutomationProperties.LiveSetting="Polite">
+      <StackPanel><TextBlock Text="{Binding State.Error}" Foreground="#E7CB91" TextWrapping="Wrap" />
+        <Button Content="Retry" Command="{Binding RetryCommand}" HorizontalAlignment="Left" Margin="0,10,0,0">
+          <Button.Style><Style TargetType="Button" BasedOn="{StaticResource LinkButton}"><Style.Triggers><DataTrigger Binding="{Binding RetryCommand}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></Button.Style>
+        </Button>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

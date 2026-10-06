@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directories:
+      - /src/RepoBackup.Core
+      - /src/RepoBackup.Desktop
+      - /src/RepoBackup.Cli
+      - /src/RepoBackup.Runner
+      - /tests/RepoBackup.Tests
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

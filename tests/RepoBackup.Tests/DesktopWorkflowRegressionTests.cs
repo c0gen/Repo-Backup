@@ -34,8 +34,8 @@ public static class DesktopWorkflowRegressionTests
         app.Catalog.SaveDestination(first); app.Catalog.SaveDestination(second);
         var full = new JobRecord { ProjectId = alpha.Id, ProjectName = alpha.Name, SeriesId = "project-" + alpha.Id, DestinationId = first.Id, Backup = Outcome.Successful, Verification = Outcome.Successful, Cleanup = Outcome.Successful, SnapshotId = new string('c', 64), FinishedAt = DateTimeOffset.UtcNow };
         app.Catalog.SaveJob(full);
-        var dialogs = new FixtureDialogs(); var model = new MainViewModel(app, dialogs);
-        await tests.Run("Desktop protection and Needs backup refresh for the chosen destination", () =>
+        var dialogs = new FixtureDialogs(); var model = new MainViewModel(app, dialogs); await model.ReloadAsync();
+        await tests.Run("Desktop protection and Needs backup refresh for the chosen destination", async () =>
         {
             model.SelectedDestination = first;
             Assert(model.Projects.Single(p => p.Id == alpha.Id).Status == "Ready", "First destination lost full-project protection.");
@@ -43,12 +43,13 @@ public static class DesktopWorkflowRegressionTests
             model.SelectedDestination = second;
             Assert(model.Projects.All(p => p.LastBackup is null && p.NeedsBackup) && model.ProjectView.Cast<ProjectItem>().Count() == 2, "Empty destination inherited protection.");
             app.Catalog.SaveJob(full with { Id = Guid.NewGuid().ToString("N"), StartedAt = full.StartedAt.AddMinutes(1), Backup = Outcome.Cancelled });
+            await model.ReloadAsync();
             model.SelectedDestination = first;
             var item = model.Projects.Single(p => p.Id == alpha.Id);
             Assert(item.LastBackup is not null && item.NeedsBackup && item.Status == "Cancelled", "Later unsuccessful full attempt did not require a backup.");
             var protection = ProjectProtection.For(alpha.Id, second.Id, [full with { DestinationId = second.Id, Coverage = Coverage.PartialSelection }]);
             Assert(protection.NeedsBackup, "Partial selection counted as full protection.");
-            model.ProjectFilter = "All projects"; return Task.CompletedTask;
+            model.ProjectFilter = "All projects";
         });
         await tests.Run("Select all visible toggles twice and preserves explicitly counted hidden selections", () =>
         {
@@ -87,16 +88,16 @@ public static class DesktopWorkflowRegressionTests
         await tests.Run("Repository verification failures remain displayed after their dialog is dismissed", async () =>
         {
             var verification = await app.Backups.VerifyAsync(first); Assert(verification.Outcome == Outcome.Failed, "Missing repository did not fail verification.");
+            await model.ReloadAsync();
             Assert(model.LatestVerificationText.Contains("Failed") && model.LatestVerificationText.Contains(verification.Message), "Failure only existed in the transient dialog.");
             model.SelectedDestination = second; Assert(!model.LatestVerificationText.Contains(verification.Message), "Verification outcome leaked across destinations.");
         });
-        await tests.Run("Dismissed projects can be reactivated from their desktop view", () =>
+        await tests.Run("Dismissed projects can be reactivated from their desktop view", async () =>
         {
-            model.DismissCommand.Execute(model.Projects.Single(p => p.Id == beta.Id));
+            model.DismissCommand.Execute(model.Projects.Single(p => p.Id == beta.Id)); await ((AsyncCommand)model.DismissCommand).Execution;
             var dismissed = model.DismissedProjects.Single(p => p.Id == beta.Id);
-            model.ApproveCommand.Execute(dismissed);
+            model.ApproveCommand.Execute(dismissed); await ((AsyncCommand)model.ApproveCommand).Execution;
             Assert(model.DismissedProjects.Count == 0 && model.Projects.Single(p => p.Id == beta.Id).Enabled, "Dismissed project was not reactivated.");
-            return Task.CompletedTask;
         });
         await tests.Run("Source previews expose all warnings beyond the first four", async () =>
         {
@@ -104,7 +105,7 @@ public static class DesktopWorkflowRegressionTests
             {
                 var missing = Enumerable.Range(1, 8).Select(i => new SourceRoot(Guid.NewGuid().ToString("N"), Path.Combine(root, "missing-source-" + i))).ToList();
                 app.Catalog.SaveProject(alpha with { Roots = [.. alpha.Roots, .. missing] });
-                var warningModel = new MainViewModel(app, dialogs); await warningModel.RefreshPreviewAsync();
+                var warningModel = new MainViewModel(app, dialogs); await warningModel.ReloadAsync(); await warningModel.RefreshPreviewAsync();
                 Assert(missing.All(r => warningModel.PreviewWarnings.Contains(r.Path)), "Some source warnings were truncated.");
             }
             finally { app.Catalog.SaveProject(alpha); }
@@ -131,15 +132,21 @@ public static class DesktopWorkflowRegressionTests
                 string? savedId = null;
                 try
                 {
-                    model.SaveScheduleCommand.Execute(null); await FinishAsync(model.SaveScheduleCommand);
+                    model.SaveScheduleCommand.Execute(null);
+                    Assert(model.IsBusy && model.ProgressStage == "Saving schedule…" && model.IsProgressIndeterminate, "Schedule save did not report its active operation.");
+                    await FinishAsync(model.SaveScheduleCommand);
                     savedId = model.ScheduleEditor.Id;
-                    Assert(savedId is not null && model.SelectedSchedule?.Id == savedId && model.ScheduleEditor.Mode == "Edit schedule", "Creation did not retain editor identity.");
+                    Assert(savedId is not null && model.SelectedSchedule?.Id == savedId && model.ScheduleEditor.Mode == "Edit schedule", "Creation did not retain editor identity. " + string.Join("; ", dialogs.Errors.Select(e => e.Message)));
                     model.ScheduleEditor.Name = "Updated temporary schedule";
                     model.SaveScheduleCommand.Execute(null); await FinishAsync(model.SaveScheduleCommand);
                     page.UpdateLayout();
                     Assert(app.Catalog.Schedules().Count == 1 && app.Catalog.Schedules().Single().Id == savedId && app.Catalog.Schedules().Single().Name == "Updated temporary schedule" && app.Catalog.Schedules().Single().DestinationId == second.Id && app.Catalog.Schedules().Single().SelectionId == scope.Id && model.ScheduleEditor.DestinationId == second.Id && model.ScheduleEditor.SelectionId == scope.Id && model.SelectedDestination.Id == first.Id, "Repeated save duplicated the task or changed destination/scope.");
                     var query = await new Core.Infrastructure.ProcessRunner().RunAsync("schtasks.exe", ["/Query", "/TN", "RepoBackup-" + savedId, "/XML"]);
                     query.EnsureSuccess("Inspect temporary task"); Assert(query.Output.Contains("Updated temporary schedule"), "Windows task was not updated.");
+                    model.DeleteScheduleCommand.Execute(null);
+                    Assert(model.IsBusy && model.ProgressStage == "Removing schedule…", "Schedule removal did not report its active operation.");
+                    await ((AsyncCommand)model.DeleteScheduleCommand).Execution;
+                    Assert(app.Catalog.Schedules().Count == 0 && model.SelectedSchedule is null && !model.IsBusy, "Desktop schedule removal did not settle.");
                 }
                 finally { if (savedId is not null) await app.Scheduler.DeleteAsync(savedId); }
             });
@@ -163,7 +170,7 @@ public static class DesktopWorkflowRegressionTests
                     window.Show(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
                     foreach (var section in new[] { "Projects", "Settings", "Destinations", "Discoveries", "Snapshots & Restore", "Activity" })
                     {
-                        model.Section = section; await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); window.UpdateLayout();
+                        model.Section = section; if (section == "Settings") await model.RefreshSchedulesAsync(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); window.UpdateLayout();
                         var content = (FrameworkElement)window.Content;
                         var bitmap = new RenderTargetBitmap((int)(size.Width * scale), (int)(size.Height * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32); bitmap.Render(content);
                         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));

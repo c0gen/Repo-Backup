@@ -9,7 +9,7 @@ $taskOutput = if ($PackageDirectory) { [IO.Path]::GetFullPath($PackageDirectory)
 $taskOutput = $taskOutput.TrimEnd('\')
 Reset-PackageDirectory -Path $taskOutput -Root (Join-Path $taskRoot 'dist')
 foreach ($taskProject in @('RepoBackup.Desktop','RepoBackup.Cli','RepoBackup.Runner')) {
-    & $Sdk publish (Join-Path $taskRoot "src\$taskProject\$taskProject.csproj") -c $Configuration -r win-x64 --self-contained true -o $taskOutput --disable-build-servers -m:1 -v minimal -p:PublishSingleFile=false -p:PublishTrimmed=false "-p:Version=$($taskVersion.Version)"
+    & $Sdk publish (Join-Path $taskRoot "src\$taskProject\$taskProject.csproj") -c $Configuration -r win-x64 --self-contained true -o $taskOutput --disable-build-servers -m:1 -v minimal -p:RestoreLockedMode=true -p:PublishSingleFile=false -p:PublishTrimmed=false "-p:Version=$($taskVersion.Version)"
     if ($LASTEXITCODE -ne 0) { throw "Publishing $taskProject failed." }
 }
 Copy-Item -LiteralPath (Join-Path $taskRoot 'scripts\Install.ps1') -Destination (Join-Path $taskOutput 'Install.ps1') -Force

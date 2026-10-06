@@ -1,0 +1,39 @@
+<UserControl x:Class="RepoBackup.Desktop.Views.SetupWizardView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:views="clr-namespace:RepoBackup.Desktop.Views"
+             KeyboardNavigation.TabNavigation="Cycle" FocusManager.IsFocusScope="True" IsVisibleChanged="VisibilityChanged" PreviewKeyDown="OnPreviewKeyDown">
+  <Border Style="{StaticResource Card}" Padding="26" Margin="28" MaxWidth="880" HorizontalAlignment="Stretch">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+      <StackPanel Margin="0,0,0,16"><TextBlock Text="Welcome to Repo Backup" Style="{StaticResource Heading}" /><TextBlock Text="{Binding StepLabel}" Foreground="{StaticResource AccentBrush}" Margin="0,8,0,0" />
+        <TextBlock Text="1  Destination     ›     2  Discoveries     ›     3  Review in Projects" Style="{StaticResource Muted}" Margin="0,12,0,0" />
+        <views:LoadingStatus State="{Binding Main.CatalogLoad}" Message="Loading your configuration…" RetryCommand="{Binding Main.RetryCatalogCommand}" />
+        <views:LoadingStatus State="{Binding DestinationLoad}" Message="Preparing your backup repository…" />
+        <views:LoadingStatus State="{Binding ProgressLoad}" Message="Saving setup…" />
+      </StackPanel>
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="{Binding IsDestination,Converter={StaticResource Visible}}">
+        <StackPanel Margin="0,0,12,0">
+          <TextBlock Text="Where should your backups live?" Style="{StaticResource Subheading}" />
+          <TextBlock Text="Choose a folder on a backup drive or network share. A new repository needs an empty folder. You can also open an existing backup repository." TextWrapping="Wrap" Style="{StaticResource Muted}" Margin="0,8,0,18" />
+          <Border Style="{StaticResource Card}" Margin="0,0,0,16" Visibility="{Binding ShowSavedDestination,Converter={StaticResource Visible}}"><StackPanel><TextBlock Text="Use a saved destination" FontWeight="SemiBold" /><ComboBox ItemsSource="{Binding Main.Destinations}" SelectedItem="{Binding Main.SelectedDestination}" DisplayMemberPath="Name" Margin="0,10,0,0" IsEnabled="{Binding CanChangeStep}" /><TextBlock Text="Continue with this destination." Style="{StaticResource Muted}" Margin="0,8,0,0" /><Button Content="Add or open another destination" Command="{Binding NewDestinationCommand}" Style="{StaticResource LinkButton}" HorizontalAlignment="Left" Margin="0,12,0,0" /></StackPanel></Border>
+          <StackPanel Visibility="{Binding IsCreatingDestination,Converter={StaticResource Visible}}"><views:DestinationForm x:Name="DestinationForm" IsEnabled="{Binding CanChangeStep}" /><Button Content="Use a saved destination instead" Command="{Binding UseSavedDestinationCommand}" Style="{StaticResource LinkButton}" HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding Main.HasDestinations,Converter={StaticResource Visible}}" /></StackPanel>
+          <WrapPanel Margin="0,18,0,0"><Button Content="Cancel operation" Command="{Binding Main.CancelCommand}" Margin="10,0,0,0" Visibility="{Binding DestinationLoad.IsLoading,Converter={StaticResource Visible}}" /></WrapPanel>
+        </StackPanel>
+      </ScrollViewer>
+      <Grid Grid.Row="1" Visibility="{Binding IsDiscovery,Converter={StaticResource Visible}}"><Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <views:DiscoveryReview DataContext="{Binding Main}" />
+        <StackPanel Grid.Row="1" Margin="0,14,0,0"><TextBlock Text="{Binding IncludedSummary}" Foreground="{StaticResource AccentBrush}" /><Expander Header="Review included projects" Margin="0,10,0,0"><ScrollViewer MaxHeight="140"><ItemsControl ItemsSource="{Binding Main.Projects}" IsEnabled="{Binding Main.CanEditCatalog}"><ItemsControl.ItemTemplate><DataTemplate><CheckBox IsChecked="{Binding Enabled}" Content="{Binding Name}" ToolTip="{Binding Paths}" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></ScrollViewer></Expander><TextBlock Text="{Binding DiscoveryNextHint}" Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0" /></StackPanel>
+      </Grid>
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="{Binding IsReview,Converter={StaticResource Visible}}"><StackPanel>
+        <TextBlock Text="Your first backup is ready to review" Style="{StaticResource Subheading}" />
+        <Border Style="{StaticResource Card}" Margin="0,18,0,18"><StackPanel><TextBlock Text="{Binding ReviewDestination}" TextWrapping="Wrap" FontWeight="SemiBold" /><TextBlock Text="{Binding ReviewProtection}" Style="{StaticResource Muted}" Margin="0,10,0,0" /></StackPanel></Border>
+        <TextBlock Text="{Binding IncludedSummary}" FontWeight="SemiBold" Margin="0,0,0,10" />
+        <ItemsControl ItemsSource="{Binding Main.Projects}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,0,0,12"><StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Enabled}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></StackPanel.Style><TextBlock Text="{Binding Name}" /><TextBlock Text="{Binding Paths}" Style="{StaticResource Muted}" TextWrapping="Wrap" FontSize="11" /><TextBlock Text="{Binding Status}" Foreground="{Binding StatusBrush}" FontSize="11" /></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+        <TextBlock Text="Projects opens with your available, included projects selected. Review the sources and exclusions, then choose Back Up Selected. Unavailable projects can be relinked there." TextWrapping="Wrap" Style="{StaticResource Muted}" Margin="0,10,0,0" />
+        <TextBlock Text="Full projects include Git history and unfinished work. Common dependency and cache folders are excluded by default. Scheduling is optional in Settings." TextWrapping="Wrap" Style="{StaticResource Muted}" Margin="0,12,0,0" />
+      </StackPanel></ScrollViewer>
+      <Grid Grid.Row="2" Margin="0,20,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <Button Content="Do this later" Command="{Binding LaterCommand}" Style="{StaticResource LinkButton}" />
+        <Button Grid.Column="2" Content="Back" Command="{Binding BackCommand}" Margin="0,0,10,0" />
+        <Button Grid.Column="3" Content="{Binding NextLabel}" Click="NextClick" IsEnabled="{Binding CanUseNextAction}" Style="{StaticResource PrimaryButton}" />
+      </Grid>
+    </Grid>
+  </Border>
+</UserControl>

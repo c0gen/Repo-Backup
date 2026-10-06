@@ -77,13 +77,17 @@ This legacy script verifies the package hashes, copies the application to `%LOCA
 
 ## First backup
 
-1. Open **Destinations**, choose **Add / open repository**, and create a repository in an empty folder on your backup drive or share. **No password required** is selected by default. Anyone who can access that backup folder can restore it.
-2. If you choose **Protect with a recovery key**, acknowledge the recovery warning and export the key when offered. Keep it somewhere safe, separate from the backup drive. You can skip the offer and export later from **Destinations**, but the key is required for recovery on another computer.
-3. Review candidates in **Discoveries**, add a folder manually, or scan for Git repositories. Enable the projects you want to protect.
-4. In **Projects**, select a destination and review the source preview and exclusions. Use **Back Up Selected** or **Back Up All Enabled**.
-5. Check the backup, verification, and cleanup results in **Activity**. Use **Snapshots & Restore** to browse recovery points or perform a test restore.
+The first launch opens a short setup wizard. Existing configured installations open the normal Projects screen.
 
-Scheduling starts disabled. Enable it in **Settings** after configuring the projects and destination you want to use.
+1. **Destination:** Choose an empty folder on your backup drive or share, then choose **Save and continue**. **No password required** is selected by default. To reconnect backups, choose **Open an existing restic repository** instead.
+2. If you choose **Protect with a recovery key**, acknowledge the recovery warning and export the key when offered. Keep it somewhere safe, separate from the backup drive. You can skip the offer and export later from **Destinations**, but the key is required for recovery on another computer.
+3. **Discoveries:** Review the projects found on this computer and include the ones you want to protect. You can also add a folder manually or scan for Git repositories. Include at least one available project to continue.
+4. **Review in Projects:** Check the destination and included projects, then choose **Open Projects**. The available projects you included are selected. Review the source preview and exclusions, then choose **Back Up Selected** or **Back Up All Enabled**.
+5. Check backup, verification, and cleanup results in **Activity**. Use **Snapshots & Restore** to browse recovery points or perform a test restore.
+
+Choose **Do this later** to leave setup at any point when no configuration is being saved. Your saved destination and project choices are kept. **Continue setup** resumes from the next unmet prerequisite; the wizard does not reopen automatically after dismissal. You can also reopen it from **Settings → Review setup**. For recovery from an existing repository, leave the wizard and use **Destinations → Rebuild catalog from snapshots**, then browse **Snapshots & Restore**.
+
+Setup does not start a backup or enable scheduling. Enable scheduling in **Settings** after configuring the projects and destination you want to use. Loading indicators distinguish pending information from empty results, and failed reads offer a retry in the affected panel.
 
 ## Backup contents and recovery
 

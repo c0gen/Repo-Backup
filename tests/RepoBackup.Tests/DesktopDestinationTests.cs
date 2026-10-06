@@ -21,7 +21,7 @@ public static class DesktopDestinationTests
         var application = new System.Windows.Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/RepoBackup;component/Themes/Dark.xaml", UriKind.Relative) });
         var app = new ApplicationServices(Path.Combine(root, "catalog"), discoveryProviders: []);
-        var dialogs = new FixtureDialogs(); var model = new MainViewModel(app, dialogs);
+        var dialogs = new FixtureDialogs(); var model = new MainViewModel(app, dialogs); await model.ReloadAsync();
         using var bindingErrors = new StringWriter(); using var listener = new TextWriterTraceListener(bindingErrors);
         PresentationTraceSources.DataBindingSource.Listeners.Add(listener);
         PresentationTraceSources.DataBindingSource.Switch.Level = SourceLevels.Error;
@@ -63,7 +63,7 @@ public static class DesktopDestinationTests
             {
                 var warned = 0; var saves = dialogs.SaveCalls;
                 dialogs.Next = Form(Path.Combine(root, "password-free"), () => { warned++; return true; });
-                Assert(dialogs.Next.Protection == DestinationProtection.PasswordFree && ((StackPanel)dialogs.Next.FindName("KeySection")).Visibility == Visibility.Collapsed, "Desktop default or key visibility is incorrect.");
+                Assert(dialogs.Next.Protection == DestinationProtection.PasswordFree && ((StackPanel)dialogs.Next.Editor.FindName("KeySection")).Visibility == Visibility.Collapsed, "Desktop default or key visibility is incorrect.");
                 Render((FrameworkElement)dialogs.Next.Content, 560, dialogs.Next.Background, Path.Combine(root, "password-free-dialog.png"));
                 model.AddDestinationCommand.Execute(null); await FinishAsync(model.AddDestinationCommand);
                 Assert(warned == 0 && dialogs.SaveCalls == saves && model.SelectedDestination?.Protection == DestinationProtection.PasswordFree && !model.ExportKeyCommand.CanExecute(null), "Password-free creation warned, offered export or enabled key export.");
@@ -74,18 +74,20 @@ public static class DesktopDestinationTests
             {
                 var fresh = new ApplicationServices(Path.Combine(root, "fresh-catalog"), discoveryProviders: []);
                 var freshDialogs = new FixtureDialogs { Next = Form(model.SelectedDestination!.Path, () => throw new InvalidOperationException("Opening should not warn.")) };
-                ((CheckBox)freshDialogs.Next.FindName("ExistingInput")).IsChecked = true;
-                var freshModel = new MainViewModel(fresh, freshDialogs);
+                ((CheckBox)freshDialogs.Next.Editor.FindName("ExistingInput")).IsChecked = true;
+                var freshModel = new MainViewModel(fresh, freshDialogs); await freshModel.ReloadAsync();
                 freshModel.AddDestinationCommand.Execute(null); await FinishAsync(freshModel.AddDestinationCommand);
                 Assert(freshModel.SelectedDestination?.RepositoryId == model.SelectedDestination.RepositoryId && freshDialogs.SaveCalls == 0 && freshDialogs.Errors.Count == 0, "Fresh password-free opening required a key or export.");
             });
+            await DesktopSetupTests.RunAsync(tests, Path.Combine(root, "setup"));
+            await DesktopLoadingTests.RunAsync(tests, Path.Combine(root, "loading"));
             await DesktopWorkflowRegressionTests.RunAsync(tests, Path.Combine(root, "workflow"));
             await tests.Run("Desktop protection switching clears unused key inputs and rendering has no binding errors", () =>
             {
                 var form = Form(Path.Combine(root, "switch-mode"), () => true); SelectProtection(form, DestinationProtection.RecoveryKey);
-                ((PasswordBox)form.FindName("KeyInput")).Password = "fixture-key-that-is-no-longer-needed";
+                ((PasswordBox)form.Editor.FindName("KeyInput")).Password = "fixture-key-that-is-no-longer-needed";
                 SelectProtection(form, DestinationProtection.PasswordFree);
-                Assert(form.RecoveryKey is null && ((PasswordBox)form.FindName("KeyInput")).Password.Length == 0, "Mode switching retained an unused key.");
+                Assert(form.RecoveryKey is null && ((PasswordBox)form.Editor.FindName("KeyInput")).Password.Length == 0, "Mode switching retained an unused key.");
                 listener.Flush(); Assert(bindingErrors.ToString().Length == 0 && dialogs.Errors.Count == 0, "Desktop binding or command errors: " + bindingErrors + string.Join("; ", dialogs.Errors.Select(e => e.Message)));
                 return Task.CompletedTask;
             });
@@ -96,10 +98,10 @@ public static class DesktopDestinationTests
     private static DestinationDialog Form(string path, Func<bool> confirm)
     {
         var form = new DestinationDialog(confirm);
-        ((TextBox)form.FindName("PathInput")).Text = path;
+        ((TextBox)form.Editor.FindName("PathInput")).Text = path;
         return form;
     }
-    private static void SelectProtection(DestinationDialog form, DestinationProtection protection) => ((ComboBox)form.FindName("ProtectionInput")).SelectedItem = protection;
+    private static void SelectProtection(DestinationDialog form, DestinationProtection protection) => ((ComboBox)form.Editor.FindName("ProtectionInput")).SelectedItem = protection;
     private static async Task FinishAsync(ICommand command)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(30);

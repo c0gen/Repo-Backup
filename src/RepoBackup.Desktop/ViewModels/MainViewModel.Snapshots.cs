@@ -4,8 +4,6 @@ namespace RepoBackup.Desktop.ViewModels;
 
 public sealed partial class MainViewModel
 {
-    private readonly SnapshotRequestCoordinator snapshotRequests = new();
-    private readonly SnapshotRequestCoordinator fileRequests = new();
     public Func<Destination, CancellationToken, Task<List<SnapshotInfo>>>? SnapshotLoader { get; set; }
     public Func<Destination, SnapshotInfo, CancellationToken, Task<List<SnapshotFileItem>>>? SnapshotFileLoader { get; set; }
     private void InitializeSnapshotCommands()
@@ -23,44 +21,52 @@ public sealed partial class MainViewModel
     public async Task RefreshSnapshotsAsync()
     {
         var destination = SelectedDestination;
-        using var request = snapshotRequests.Begin(DestinationIdentity);
+        using var request = SnapshotsLoad.Begin(DestinationIdentity);
         Snapshots.Clear(); SelectedSnapshot = null;
-        if (destination is null) return;
+        if (destination is null) { SnapshotsLoad.Cancel(request); return; }
         try
         {
             List<SnapshotInfo> snapshots;
             if (SnapshotLoader is { } loader) snapshots = await loader(destination, request.Token);
             else
             {
-                await Services.Restic.RepositoryIdentityAsync(destination, request.Token);
-                snapshots = await Services.Restic.SnapshotsAsync(destination, request.Token);
+                snapshots = await Task.Run(async () =>
+                {
+                    await Services.Restic.RepositoryIdentityAsync(destination, request.Token);
+                    return await Services.Restic.SnapshotsAsync(destination, request.Token);
+                }, request.Token);
             }
-            if (!snapshotRequests.Accepts(request, DestinationIdentity)) return;
+            if (!SnapshotsLoad.Accepts(request)) return;
             foreach (var snapshot in snapshots) Snapshots.Add(new(snapshot));
-            StatusMessage = $"{snapshots.Count} recovery points loaded."; SelectedSnapshot = Snapshots.FirstOrDefault();
+            StatusMessage = $"{snapshots.Count} recovery points loaded."; SelectedSnapshot = Snapshots.FirstOrDefault(); SnapshotsLoad.Complete(request);
         }
-        catch (OperationCanceledException) { }
-        catch (Exception e) { if (snapshotRequests.Accepts(request, DestinationIdentity)) StatusMessage = "Snapshot browser: " + e.Message; }
+        catch (OperationCanceledException) { SnapshotsLoad.Cancel(request); }
+        catch (Exception e) { SnapshotsLoad.Fail(request, e); }
     }
     private string FileRequestIdentity => DestinationIdentity + "|" + SelectedSnapshot?.Snapshot.Id;
     private async Task LoadSnapshotFilesAsync()
     {
-        using var request = fileRequests.Begin(FileRequestIdentity);
+        using var request = SnapshotFilesLoad.Begin(FileRequestIdentity);
         SnapshotFiles.Clear(); SelectedSnapshotFile = null; var destination = SelectedDestination; var snapshot = SelectedSnapshot;
-        if (destination is null || snapshot is null) return;
+        if (destination is null || snapshot is null) { SnapshotFilesLoad.Cancel(request); return; }
         try
         {
             List<SnapshotFileItem> files;
             if (SnapshotFileLoader is { } loader) files = await loader(destination, snapshot.Snapshot, request.Token);
             else
             {
-                var manifest = await Services.Restic.ManifestAsync(destination, snapshot.Snapshot, request.Token);
-                files = SnapshotBrowser.ProjectFiles(await Services.Restic.FilesAsync(destination, snapshot.Snapshot.Id, request.Token), manifest).ToList();
+                files = await Task.Run(async () =>
+                {
+                    var manifest = await Services.Restic.ManifestAsync(destination, snapshot.Snapshot, request.Token);
+                    return SnapshotBrowser.ProjectFiles(await Services.Restic.FilesAsync(destination, snapshot.Snapshot.Id, request.Token), manifest).ToList();
+                }, request.Token);
             }
-            if (fileRequests.Accepts(request, FileRequestIdentity)) foreach (var file in files) SnapshotFiles.Add(file);
+            if (!SnapshotFilesLoad.Accepts(request)) return;
+            foreach (var file in files) SnapshotFiles.Add(file);
+            SnapshotFilesLoad.Complete(request);
         }
-        catch (OperationCanceledException) { }
-        catch (Exception e) { if (fileRequests.Accepts(request, FileRequestIdentity)) StatusMessage = "Snapshot browser: " + e.Message; }
+        catch (OperationCanceledException) { SnapshotFilesLoad.Cancel(request); }
+        catch (Exception e) { SnapshotFilesLoad.Fail(request, e); }
     }
     public Task RefreshSnapshotFilesAsync() => LoadSnapshotFilesAsync();
     private async Task RestoreAsync(bool selectedPath, bool test)

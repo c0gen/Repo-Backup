@@ -1,4 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>WinExe</OutputType><UseWPF>true</UseWPF><ApplicationManifest>app.manifest</ApplicationManifest><AssemblyName>RepoBackup</AssemblyName></PropertyGroup>
+  <PropertyGroup><OutputType>WinExe</OutputType><UseWPF>true</UseWPF><ApplicationManifest>app.manifest</ApplicationManifest><ApplicationIcon>Assets\RepoBackup.ico</ApplicationIcon><AssemblyName>RepoBackup</AssemblyName></PropertyGroup>
   <ItemGroup><ProjectReference Include="../RepoBackup.Core/RepoBackup.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\RepoBackup.ico" />
+    <Resource Include="Assets\RepoBackup.png" />
+  </ItemGroup>
 </Project>

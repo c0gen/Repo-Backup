@@ -15,6 +15,9 @@ public sealed class AppPaths
     public static string DefaultClaudeConfigPath => Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR") is { Length: > 0 } directory
         ? Path.Combine(directory, ".claude.json") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude.json");
     public static string DefaultAntigravityUserDataDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Antigravity");
+    public static string[] DefaultVsCodeUserDataDirectories => [
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Code"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Code - Insiders")];
     public static string DefaultAntigravityHooksPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "config", "hooks.json");
 
     public AppPaths(string? dataDirectory = null)

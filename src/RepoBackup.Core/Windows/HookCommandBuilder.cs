@@ -8,7 +8,7 @@ public static class HookCommandBuilder
 {
     public static string Build(string runnerPath, string providerId, string? dataDirectory = null)
     {
-        if (!DiscoveryProviders.All.Contains(providerId)) throw new ArgumentException("Unknown hook provider.");
+        if (!DiscoveryProviders.HookCapable.Contains(providerId)) throw new ArgumentException("Unknown hook provider.");
         runnerPath = PathSafety.Normalize(runnerPath); dataDirectory = PathSafety.Normalize(dataDirectory ?? AppPaths.DefaultDataDirectory);
         static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
         var arguments = WindowsCommandLine.Join(["register-hook", "--source", providerId, "--data-dir", dataDirectory]);

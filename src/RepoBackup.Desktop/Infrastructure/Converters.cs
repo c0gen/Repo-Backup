@@ -26,6 +26,7 @@ public sealed class DisplayLabelConverter : IValueConverter
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture) => value switch
     {
         Coverage.FullProject => "Full project", Coverage.PartialSelection => "Partial selection", Outcome.NotRun => "Not run",
+        DestinationProtection.PasswordFree => "No password required", DestinationProtection.RecoveryKey => "Protect with a recovery key",
         DateTimeOffset time => time.LocalDateTime.ToString("MMM d, h:mm tt", culture), _ => value?.ToString() ?? "—"
     };
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();

@@ -1,8 +1,8 @@
 # Repo Backup
 
-A Windows desktop application for encrypted, versioned backups of Git repositories and project folders.
+A Windows desktop application for versioned backups of Git repositories and project folders, with optional recovery-key protection.
 
-Repo Backup protects the work on your computer: committed history, staged and unstaged changes, untracked files, configuration, assets, and associated Git worktrees. It uses restic to store encrypted, deduplicated snapshots on a local drive, external drive, or UNC network share. Browse earlier versions and restore an entire project, a folder, or a single file from the desktop app or CLI.
+Repo Backup protects the work on your computer: committed history, staged and unstaged changes, untracked files, configuration, assets, and associated Git worktrees. It uses restic to store deduplicated snapshots on a local drive, external drive, or UNC network share. New destinations default to **No password required**; choose **Protect with a recovery key** if you want to restrict access. Browse earlier versions and restore an entire project, a folder, or a single file from the desktop app or CLI.
 
 Built with C# / .NET 10 and WPF, the desktop app, command-line interface, and scheduled runner share the same backup services and SQLite catalog.
 
@@ -12,22 +12,29 @@ Built with C# / .NET 10 and WPF, the desktop app, command-line interface, and sc
 
 ## Features
 
-- **Project discovery:** find projects from Codex, Claude Code, and Antigravity, scan for Git repositories, or add any folder manually. Discovered projects enter a review inbox before they can be backed up.
+- **Project discovery:** find projects from Codex, Claude Code, Antigravity, and saved VS Code workspaces, including Codex, Claude Code, and GitHub Copilot extension associations. VS Code Stable and Insiders are detected automatically. Scan for Git repositories or add any folder manually. Discovered projects enter a review inbox before they can be backed up.
 - **Git-aware backups:** full-project snapshots include local Git history, the index, working files, linked worktrees, and local Git LFS and submodule data.
 - **Folder selections and previews:** save partial selections, inspect file counts and size estimates, and customize dependency and cache exclusions. Tracked files are preserved; `.gitignore` does not determine backup contents.
 - **Versioned recovery:** keep the latest ten successful snapshots per project or saved selection. Partial selections have their own retention series, so they cannot displace full-project recovery points.
 - **Verification and restore:** verify repository data, test restores, and recover files into a new directory. Backup, verification, and cleanup results are recorded separately.
 - **Optional scheduling:** configure daily, weekly, or interval backups through Windows Task Scheduler. The hidden runner works while the GUI is closed, catches up missed runs, and prevents overlapping scheduled jobs.
-- **Portable recovery:** encrypted snapshots include recovery manifests. Open an existing repository with its exported recovery key and rebuild the catalog on a replacement computer.
+- **Portable recovery:** snapshots include recovery manifests. Open the backup repository and rebuild the catalog on a replacement computer. Password-free repositories need only the backup folder; protected repositories also need their exported recovery key.
 - **Optional discovery hooks:** register newly used folders through native Codex, Claude Code, or Antigravity hooks. Hooks create review candidates; they do not enable projects or start backups.
 
 ## Requirements
 
 - Windows x64.
-- Git for Windows available on `PATH` for Git inspection and recovery.
 - A writable backup destination with enough space: a local folder, external drive, or UNC share accessible to the signed-in Windows user.
 
-Published packages include the .NET runtime and pinned restic executable. End users do not need to install .NET separately. Building from source requires Windows PowerShell or PowerShell 7 and internet access for the initial SDK, restic, and NuGet downloads.
+Published packages include the .NET runtime, native SQLite, restic, and private MinGit and Git LFS executables. End users do not need to install .NET or Git separately, and installation does not change the system `PATH`. Building from source requires Windows PowerShell or PowerShell 7, Git for Windows on `PATH` for the development tests, and internet access for the initial tool and NuGet downloads.
+
+## Install from GitHub Releases
+
+Download `RepoBackup-<version>-win-x64-setup.exe` from [GitHub Releases](https://github.com/c0gen/Repo-Backup/releases) and run it. The installer works offline, installs for the current Windows user without elevation, creates a Start menu shortcut, and registers an uninstaller in Windows Settings. A desktop shortcut is optional.
+
+Close Repo Backup and wait for scheduled operations to finish before installing an update. Run the newer installer over the existing installation. Your catalog, credentials, settings, and backup repositories are kept. Scheduling starts disabled on a new installation.
+
+The ZIP is also available for portable use. See [Packaging and releases](docs/PACKAGING.md) for building installers, verifying checksums, and publishing release assets.
 
 ## Build and run
 
@@ -44,8 +51,17 @@ Publishing produces:
 
 | Output | Contents |
 | --- | --- |
-| `dist/RepoBackup/` | Self-contained Windows x64 app, CLI, hidden runner, .NET runtime, native SQLite, restic and its license, installer, documentation, and SHA-256 package manifest |
-| `dist/RepoBackup-win-x64.zip` | Distributable archive of the published application |
+| `dist/RepoBackup/` | Self-contained Windows x64 app, CLI, hidden runner, .NET runtime, native SQLite, restic, MinGit, Git LFS and licenses, script installer, documentation, and SHA-256 package manifest |
+| `dist/RepoBackup-<version>-win-x64.zip` | Distributable archive of the published application |
+| `dist/SHA256SUMS` | SHA-256 checksums for the release assets |
+
+To also build the graphical installer, use `-Installer` (which includes publishing):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Build.ps1 -Test -Installer -Version 1.0.0
+```
+
+This adds `dist/RepoBackup-1.0.0-win-x64-setup.exe`. The pinned Inno Setup compiler is bootstrapped in portable mode under `.tools`; it does not need to be installed globally. Publishing a GitHub Release with a tag such as `v1.0.0` triggers the release workflow, which builds, tests, and attaches the installer, ZIP, and checksums.
 
 For a build without packaging, omit `-Publish`. Build outputs, downloaded tools, test artifacts, and published packages are ignored by Git.
 
@@ -57,12 +73,12 @@ After publishing, run:
 powershell -ExecutionPolicy Bypass -File .\dist\RepoBackup\Install.ps1
 ```
 
-The installer verifies the package hashes, copies the application to `%LOCALAPPDATA%\Programs\RepoBackup`, and creates a Start menu shortcut. Use this stable installation path for scheduling and discovery hooks. Close the installed app and wait for scheduled operations to finish before updating it.
+This legacy script verifies the package hashes, copies the application to `%LOCALAPPDATA%\Programs\RepoBackup`, and creates a Start menu shortcut. The graphical installer uses the same stable path and also registers an uninstaller. Use this path for scheduling and discovery hooks. Close the installed app and wait for scheduled operations to finish before updating it.
 
 ## First backup
 
-1. Open **Destinations**, choose **Add / open repository**, and create a repository in an empty folder on your backup drive or share.
-2. Export the destination's recovery key and keep it somewhere safe, separate from the backup repository. The key is required for recovery on another computer.
+1. Open **Destinations**, choose **Add / open repository**, and create a repository in an empty folder on your backup drive or share. **No password required** is selected by default. Anyone who can access that backup folder can restore it.
+2. If you choose **Protect with a recovery key**, acknowledge the recovery warning and export the key when offered. Keep it somewhere safe, separate from the backup drive. You can skip the offer and export later from **Destinations**, but the key is required for recovery on another computer.
 3. Review candidates in **Discoveries**, add a folder manually, or scan for Git repositories. Enable the projects you want to protect.
 4. In **Projects**, select a destination and review the source preview and exclusions. Use **Back Up Selected** or **Back Up All Enabled**.
 5. Check the backup, verification, and cleanup results in **Activity**. Use **Snapshots & Restore** to browse recovery points or perform a test restore.
@@ -73,9 +89,9 @@ Scheduling starts disabled. Enable it in **Settings** after configuring the proj
 
 Full-project backups include Git metadata, unfinished changes, untracked and ignored configuration such as `.env`, and project assets. Known dependency and cache directories such as `node_modules`, `.venv`, `__pycache__`, and `obj` are excluded by default, with tracked files preserved. Generic `build` and `dist` folders remain included unless you explicitly exclude them. Review the preview to see the rules for each project or saved selection.
 
-Credentials are protected with Windows DPAPI for the current user. The catalog, credentials, job metadata, cache, and locks live under `%LOCALAPPDATA%\RepoBackup`. Catalog exports omit credentials; export the recovery key separately. Pass `--data-dir <absolute-directory>` to the app or CLI to use an isolated catalog.
+Protected destinations save their credentials with Windows DPAPI for the current user. Password-free destinations generate no saved credential. Restic still uses its encrypted storage format in password-free mode, but anyone with the repository can unlock it; backups are restored through Repo Backup or restic rather than browsed as ordinary files. The catalog, credentials, job metadata, cache, and locks live under `%LOCALAPPDATA%\RepoBackup`. Catalog exports omit credentials; export protected destinations' recovery keys separately. Pass `--data-dir <absolute-directory>` to the app or CLI to use an isolated catalog.
 
-Restores use a new directory. Git recovery reconstructs worktree and submodule paths inside the restored copy without modifying the original repository. The backup repository and recovery key are sufficient to rebuild a catalog on a replacement computer.
+Restores use a new directory. Git recovery reconstructs worktree and submodule paths inside the restored copy without modifying the original repository. The backup repository is sufficient to rebuild a catalog on a replacement computer; protected repositories additionally require their recovery key. Existing repositories keep their current protection when upgrading or opening them.
 
 See [Recovery instructions](docs/RECOVERY.md) for full and selective restores, replacement-computer recovery, and verification details.
 
@@ -88,6 +104,8 @@ $cli = '.\dist\RepoBackup\RepoBackup.Cli.exe'
 & $cli help
 & $cli discover
 & $cli discover --source claude-code
+& $cli discover --source vscode
+& $cli discover --source copilot
 & $cli add-folder --path 'C:\Projects\Example' --name 'Example'
 & $cli destination-add --name 'Backup Drive' --path 'E:\RepoBackups'
 & $cli projects
@@ -103,7 +121,7 @@ $destinationId = 'paste-destination-id-here'
 & $cli verify --destination $destinationId
 ```
 
-The CLI also supports previews, saved selections, catalog import/export, schedules, recovery-key export, and restore operations. Existing repositories are opened with `destination-open --key-file <file>`; recovery keys are supplied as files rather than command-line passwords. Run `help` for the full command list and see [Discovery and hooks](docs/DISCOVERY.md) for provider-specific paths and overrides.
+The CLI also supports previews, saved selections, catalog import/export, schedules, recovery-key export, and restore operations. `destination-add` and `destination-open` default to password-free mode. Use `--protection recovery-key` to create a protected repository, then `key-export` to save its key. Supplying `--key-file <file>` selects recovery-key protection automatically; it cannot be combined with `--protection password-free`. Existing protected repositories are opened with `destination-open --key-file <file>`. Run `help` for the full command list and see [Discovery and hooks](docs/DISCOVERY.md) for provider-specific paths and overrides.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -162,10 +180,11 @@ Discovery depends on each program's local storage format. Invalid sources genera
 - [Recovery and replacement-computer setup](docs/RECOVERY.md)
 - [Project discovery and optional hooks](docs/DISCOVERY.md)
 - [Validation coverage and operating limits](docs/VALIDATION.md)
+- [Installer packaging and GitHub Releases](docs/PACKAGING.md)
 
 ## Third-party software
 
-Repo Backup uses restic as its backup engine. Its license is included at [`vendor/restic/LICENSE`](vendor/restic/LICENSE) and distributed with the application. The solution also uses NuGet dependencies recorded in the project files and lock files.
+Repo Backup uses restic as its backup engine. Its license is included at [`vendor/restic/LICENSE`](vendor/restic/LICENSE) and distributed with the application. Release packages include [MinGit](https://gitforwindows.org/mingit) and [Git LFS](https://github.com/git-lfs/git-lfs), with their licenses and dependency notices retained under `git/`. The solution also uses NuGet dependencies recorded in the project files and lock files.
 
 ## License
 

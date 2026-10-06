@@ -1,6 +1,8 @@
 using RepoBackup.Cli;
+using RepoBackup.Core.Infrastructure;
 using System.Text;
 
+using var installationLifetime = new InstallationLifetime();
 Console.InputEncoding = new UTF8Encoding(false);
 Console.OutputEncoding = new UTF8Encoding(false);
 using var cancellation = new CancellationTokenSource();

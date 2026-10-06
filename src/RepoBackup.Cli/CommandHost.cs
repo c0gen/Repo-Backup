@@ -1,4 +1,5 @@
 using RepoBackup.Core.Application;
+using RepoBackup.Core.Backup;
 using RepoBackup.Core.Discovery;
 using RepoBackup.Core.Infrastructure;
 using RepoBackup.Core.Models;
@@ -11,14 +12,18 @@ public static class CommandHost
     public const string Help = """
         Repo Backup — versioned Windows project recovery
         Global: --data-dir <directory> (default %LOCALAPPDATA%\RepoBackup)
-        discover [--source all|codex|claude-code|antigravity]
-          [--codex-state <file>] [--claude-config <file>] [--claude-projects <directory>] [--antigravity-user-data <directory>]
+        discover [--source all|codex|claude-code|antigravity|vscode|copilot]
+          [--codex-state <file>] [--codex-home <directory>] [--vscode-user-data <directory>]
+          [--claude-config <file>] [--claude-projects <directory>] [--antigravity-user-data <directory>]
         discover --state <file> (Codex only)      scan --path <folder>
         register --path <folder> [--name <name>]  add-folder --path <folder> [--name <name>]
         projects                                approve --project <id> [--disable]
         relink --project <id> --root <id> --path <new folder>
         destination-add --name <name> --path <empty folder>
-        destination-open --name <name> --path <repository> --key-file <recovery key>
+          [--protection password-free|recovery-key] [--key-file <recovery key>]
+        destination-open --name <name> --path <repository>
+          [--protection password-free|recovery-key] [--key-file <recovery key>]
+        Protection defaults to password-free, or recovery-key when --key-file is supplied.
         destinations                            key-export --destination <id> --output <file>
         backup --destination <id> (--all-enabled | --project <id> | --selection <id>) [--vss]
         preview --project <id> [--selection <id>]
@@ -74,12 +79,13 @@ public static class CommandHost
             {
                 case "discover":
                     var legacyState = Optional("--state"); var source = Optional("--source") ?? (legacyState is null ? "all" : DiscoveryProviders.Codex);
-                    if (legacyState is not null && (source != DiscoveryProviders.Codex || Optional("--codex-state") is not null))
+                    if (legacyState is not null && (source != DiscoveryProviders.Codex || Optional("--codex-state") is not null || Optional("--codex-home") is not null || Optional("--vscode-user-data") is not null))
                         throw new ArgumentException("--state is a Codex-only compatibility option. Use --codex-state with --source all.");
                     await Print(await app.Discovery.RefreshAsync(new DiscoveryOptions
                     {
-                        Source = source, CodexStatePath = legacyState ?? Optional("--codex-state"), ClaudeConfigPath = Optional("--claude-config"),
-                        ClaudeProjectsDirectory = Optional("--claude-projects"), AntigravityUserDataDirectory = Optional("--antigravity-user-data")
+                        Source = source, CodexStatePath = legacyState ?? Optional("--codex-state"), CodexHomeDirectory = Optional("--codex-home"),
+                        ClaudeConfigPath = Optional("--claude-config"), ClaudeProjectsDirectory = Optional("--claude-projects"),
+                        AntigravityUserDataDirectory = Optional("--antigravity-user-data"), VsCodeUserDataDirectory = Optional("--vscode-user-data")
                     }, token)); break;
                 case "scan": await Print(new { candidates = await app.Discovery.ScanAsync(Required("--path"), token) }); break;
                 case "register": case "add-folder":
@@ -88,25 +94,36 @@ public static class CommandHost
                 case "approve": var project = Project(); app.Catalog.SaveProject(project with { Reviewed = true, Dismissed = false, Enabled = !flags.Contains("--disable") }); break;
                 case "relink": app.Catalog.RelinkRoot(Project().Id, Required("--root"), Required("--path")); break;
                 case "destination-add": case "destination-open":
-                    var key = Optional("--key-file") is { } file ? (await File.ReadAllTextAsync(file, token)).Trim() : null;
-                    await Print(await app.Backups.AddDestinationAsync(Required("--name"), Required("--path"), key, command == "destination-open", token)); break;
+                    var keyFile = Optional("--key-file");
+                    var protection = Optional("--protection") switch
+                    {
+                        null => keyFile is null ? DestinationProtection.PasswordFree : DestinationProtection.RecoveryKey,
+                        "password-free" => DestinationProtection.PasswordFree,
+                        "recovery-key" => DestinationProtection.RecoveryKey,
+                        _ => throw new ArgumentException("Choose --protection password-free or recovery-key.")
+                    };
+                    if (protection == DestinationProtection.PasswordFree && keyFile is not null)
+                        throw new ArgumentException("--key-file cannot be combined with --protection password-free.");
+                    var key = keyFile is null ? null : (await File.ReadAllTextAsync(keyFile, token)).Trim();
+                    if (command == "destination-add" && protection == DestinationProtection.RecoveryKey)
+                        await errors.WriteLineAsync(BackupService.RecoveryKeyWarning);
+                    await Print(await app.Backups.AddDestinationAsync(Required("--name"), Required("--path"), key, command == "destination-open", token, protection)); break;
                 case "destinations": await Print(app.Catalog.Destinations()); break;
                 case "key-export":
-                    var keyPath = Path.GetFullPath(Required("--output")); await using (var stream = new FileStream(keyPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                    await using (var writer = new StreamWriter(stream)) await writer.WriteAsync(app.Credentials.Get(Destination().Id));
+                    await app.Backups.ExportRecoveryKeyAsync(Destination(), Path.GetFullPath(Required("--output")), token: token);
                     await output.WriteLineAsync("Recovery key exported. Store it separately from the backup drive."); break;
                 case "preview": await Print(await app.Planner.PreviewAsync(Project(), Selection(), token)); break;
                 case "backup":
                     var selection = Selection();
                     var projects = selection is not null ? app.Catalog.Projects().Where(p => p.Id == selection.ProjectId) : flags.Contains("--all-enabled") ? app.Catalog.Projects().Where(p => p.Enabled && p.Reviewed && !p.Dismissed) : [Project()];
                     var jobs = await app.Backups.RunAsync(Destination(), projects, selection, token: token, useVss: flags.Contains("--vss")); await Print(jobs);
-                    return jobs.Count > 0 && jobs.All(j => j.Backup == Outcome.Successful && j.Verification == Outcome.Successful && j.Cleanup != Outcome.Failed) ? 0 : 2;
+                    return RunOutcome.ExitCode(jobs);
                 case "snapshots": await Print(await app.Restic.SnapshotsAsync(Destination(), token)); break;
                 case "files": await Print(await app.Restic.FilesAsync(Destination(), Required("--snapshot"), token)); break;
                 case "restore":
                     var destination = Destination(); var snapshot = (await app.Restic.SnapshotsAsync(destination, token)).Single(s => s.Id.StartsWith(Required("--snapshot"), StringComparison.Ordinal));
                     await output.WriteLineAsync(await app.Restore.RestoreAsync(destination, snapshot, Required("--target"), Optional("--path"), token: token)); break;
-                case "verify": var verification = await app.Backups.VerifyAsync(Destination(), token); await Print(verification); return verification.Outcome == Outcome.Successful ? 0 : 2;
+                case "verify": var verification = await app.Backups.VerifyAsync(Destination(), token); await Print(verification); return verification.Outcome == Outcome.Cancelled ? 130 : verification.Outcome == Outcome.Successful ? 0 : 2;
                 case "recover": await Print(new { rebuiltProjects = await app.Restore.RebuildCatalogAsync(Destination(), token) }); break;
                 case "export": await File.WriteAllTextAsync(Required("--output"), app.Catalog.Export(), token); break;
                 case "import": app.Catalog.Import(await File.ReadAllTextAsync(Required("--input"), token)); break;
@@ -123,12 +140,12 @@ public static class CommandHost
                     var scheduledSelection = scheduled.SelectionId is { } selectedId ? app.Catalog.Selections().Single(s => s.Id == selectedId) : null;
                     var scheduledProjects = app.Catalog.Projects().Where(p => p.Reviewed && !p.Dismissed && (scheduledSelection is null ? p.Enabled : p.Id == scheduledSelection.ProjectId));
                     var scheduledJobs = await app.Backups.RunAsync(app.Catalog.Destinations().Single(d => d.Id == scheduled.DestinationId), scheduledProjects, scheduledSelection, token: token);
-                    return scheduledJobs.Count > 0 && scheduledJobs.All(j => j.Backup == Outcome.Successful && j.Verification == Outcome.Successful && j.Cleanup != Outcome.Failed) ? 0 : 2;
+                    return RunOutcome.ExitCode(scheduledJobs);
                 case "install-hook":
                     var hookSource = Optional("--source") ?? DiscoveryProviders.Codex;
                     DiscoveryHookInstaller.Install(hookSource, app.Catalog, app.Paths.DataDirectory, configurationPath: Optional("--config"));
                     await output.WriteLineAsync("Hook configured. " + DiscoveryHookInstaller.Instructions(hookSource)); break;
-                case "hook-status": await Print(DiscoveryProviders.All.ToDictionary(p => p, p => DiscoveryHookInstaller.Status(app.Catalog, p))); break;
+                case "hook-status": await Print(DiscoveryProviders.HookCapable.ToDictionary(p => p, p => DiscoveryHookInstaller.Status(app.Catalog, p))); break;
                 default: throw new ArgumentException("Unknown command. Run help for available commands.");
             }
             return 0;

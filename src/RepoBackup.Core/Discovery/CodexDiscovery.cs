@@ -3,7 +3,7 @@ using RepoBackup.Core.Infrastructure;
 
 namespace RepoBackup.Core.Discovery;
 
-public sealed class CodexDiscovery(string? statePath = null) : IProjectDiscoveryProvider
+public sealed class CodexDiscovery(string? statePath = null, string? homeDirectory = null) : IProjectDiscoveryProvider
 {
     public string Id => DiscoveryProviders.Codex;
 
@@ -39,9 +39,21 @@ public sealed class CodexDiscovery(string? statePath = null) : IProjectDiscovery
 
     public async Task<ProviderDiscoveryResult> ReadAsync(CancellationToken token = default)
     {
-        var path = statePath ?? Path.Combine(AppPaths.DefaultCodexHome, ".codex-global-state.json");
-        try { return new(Parse(await DiscoveryFiles.ReadAsync(path, token).ConfigureAwait(false)), []); }
-        catch (Exception e) when ((e is FileNotFoundException or DirectoryNotFoundException) && statePath is null) { return new([], []); }
-        catch (Exception e) when (DiscoveryFiles.IsReadError(e)) { return new([], [DiscoveryFiles.Warning("Codex", e)]); }
+        token.ThrowIfCancellationRequested();
+        var home = homeDirectory ?? AppPaths.DefaultCodexHome;
+        var path = statePath ?? Path.Combine(home, ".codex-global-state.json");
+        var projects = new List<DiscoveredProject>(); var warnings = new List<string>();
+        try { projects.AddRange(Parse(await DiscoveryFiles.ReadAsync(path, token).ConfigureAwait(false))); }
+        catch (Exception e) when ((e is FileNotFoundException or DirectoryNotFoundException) && statePath is null) { }
+        catch (Exception e) when (DiscoveryFiles.IsReadError(e)) { warnings.Add(DiscoveryFiles.Warning("Codex", e)); }
+        // Explicit registry overrides retain isolated, registry-only discovery.
+        if (statePath is null || homeDirectory is not null)
+        {
+            var metadata = await CodexMetadataReader.ReadAsync(home, token).ConfigureAwait(false);
+            projects.AddRange(metadata.Projects); warnings.AddRange(metadata.Warnings);
+        }
+        // Desktop and database records can share an external ID while reporting
+        // different folders. Folder identity, not that ID, decides registration.
+        return new(projects.OrderByDescending(p => p.Roots.Count).ToList(), warnings.Distinct().ToList());
     }
 }

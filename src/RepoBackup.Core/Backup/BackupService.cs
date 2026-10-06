@@ -9,52 +9,8 @@ using RepoBackup.Core.Windows;
 
 namespace RepoBackup.Core.Backup;
 
-public sealed class BackupService(AppPaths paths, CatalogStore catalog, CredentialStore credentials, ResticClient restic, SelectionPlanner planner, ProjectDiscoveryService discovery, Func<string, long?>? availableSpace = null)
+public sealed partial class BackupService(AppPaths paths, CatalogStore catalog, CredentialStore credentials, ResticClient restic, SelectionPlanner planner, ProjectDiscoveryService discovery, Func<string, long?>? availableSpace = null)
 {
-    public async Task<Destination> AddDestinationAsync(string name, string path, string? recoveryKey = null, bool openExisting = false, CancellationToken token = default)
-    {
-        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Enter a destination name.");
-        path = PathSafety.Normalize(path);
-        PathSafety.EnsureDestinationOutsideSources(path, catalog.Projects().Where(p => p.Enabled && p.Reviewed).SelectMany(p => p.Roots).Select(r => r.Path));
-        var existing = catalog.Destinations().FirstOrDefault(d => PathSafety.PhysicalPath(d.Path).Equals(PathSafety.PhysicalPath(path), StringComparison.OrdinalIgnoreCase));
-        if (existing is not null && !openExisting) throw new InvalidOperationException("This destination is already registered. Use Open Existing to reconnect its recovery key.");
-        if (!Directory.Exists(Path.GetPathRoot(path))) throw new IOException("The destination drive or network share is unavailable.");
-        if (openExisting && !File.Exists(Path.Combine(path, "config"))) throw new IOException("Choose an existing restic repository containing its config file.");
-        if (!openExisting && Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()) throw new IOException("A new repository requires an empty folder. Use Open Existing for an initialized repository.");
-        if (openExisting && string.IsNullOrWhiteSpace(recoveryKey)) throw new ArgumentException("The existing repository's recovery key is required.");
-        if (existing is not null)
-        {
-            // Validate a supplied key under a temporary identity before replacing an existing protected credential.
-            var validation = existing with { Id = Guid.NewGuid().ToString("N"), Path = path };
-            credentials.Save(validation.Id, recoveryKey!);
-            try
-            {
-                using var reconnectLease = DestinationLease.Acquire(paths, path);
-                var repositoryId = await restic.RepositoryIdentityAsync(validation, token);
-                var reconnected = existing with { Name = name.Trim(), Path = path, RepositoryId = repositoryId };
-                credentials.Save(existing.Id, recoveryKey!); catalog.SaveDestination(reconnected); return reconnected;
-            }
-            finally { credentials.Delete(validation.Id); }
-        }
-        var destination = new Destination { Name = name.Trim(), Path = path };
-        credentials.Save(destination.Id, recoveryKey ?? CredentialStore.Generate());
-        try
-        {
-            Directory.CreateDirectory(path);
-            using var lease = DestinationLease.Acquire(paths, path);
-            if (!openExisting) (await restic.RunAsync(destination, ["init"], token)).EnsureSuccess("Initialize backup repository");
-            destination = destination with { RepositoryId = await restic.RepositoryIdentityAsync(destination, token) };
-            catalog.SaveDestination(destination); return destination;
-        }
-        catch
-        {
-            // If initialization reached its config write, retain its generated key even if the caller cancelled afterward.
-            if (File.Exists(Path.Combine(path, "config"))) catalog.SaveDestination(destination);
-            else credentials.Delete(destination.Id);
-            throw;
-        }
-    }
-
     public async Task<VerificationRecord> VerifyAsync(Destination destination, CancellationToken token = default)
     {
         var record = new VerificationRecord(destination.Id, DateTimeOffset.UtcNow, Outcome.Running, "Verification started");
@@ -76,13 +32,13 @@ public sealed class BackupService(AppPaths paths, CatalogStore catalog, Credenti
         IProgress<BackupProgress>? progress = null, CancellationToken token = default, bool useVss = false)
     {
         if (useVss && !new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) throw new InvalidOperationException("VSS was selected. Run Repo Backup as Administrator to use volume snapshots; the run has not fallen back to live mode.");
-        await discovery.RefreshAsync(token: token);
         var projects = requestedProjects.ToList();
         if (projects.Count == 0) throw new InvalidOperationException("Select at least one project.");
         if (projects.Any(p => !p.Reviewed || p.Dismissed)) throw new InvalidOperationException("Review discovered projects before including them in a backup.");
         DestinationLease? acquired = null;
         try
         {
+            await discovery.RefreshAsync(token: token);
             acquired = DestinationLease.Acquire(paths, destination.Path);
             await restic.PrepareRepositoryAsync(destination, token);
         }
@@ -102,7 +58,11 @@ public sealed class BackupService(AppPaths paths, CatalogStore catalog, Credenti
         var results = new List<JobRecord>();
         foreach (var requested in projects)
         {
-            if (token.IsCancellationRequested) break;
+            if (token.IsCancellationRequested)
+            {
+                var cancelled = new JobRecord { ProjectId = requested.Id, ProjectName = selection?.Name ?? requested.Name, SeriesId = selection is null ? "project-" + requested.Id : "selection-" + selection.Id, DestinationId = destination.Id, Coverage = selection is null ? Coverage.FullProject : Coverage.PartialSelection, Backup = Outcome.Cancelled, FinishedAt = DateTimeOffset.UtcNow, Messages = ["Cancelled before this project started."] };
+                catalog.SaveJob(cancelled); results.Add(cancelled); continue;
+            }
             var project = catalog.Projects().Single(p => p.Id == requested.Id);
             var job = new JobRecord { ProjectId = project.Id, ProjectName = selection?.Name ?? project.Name, SeriesId = selection is null ? "project-" + project.Id : "selection-" + selection.Id, DestinationId = destination.Id, Coverage = selection is null ? Coverage.FullProject : Coverage.PartialSelection };
             catalog.SaveJob(job);
@@ -143,17 +103,20 @@ public sealed class BackupService(AppPaths paths, CatalogStore catalog, Credenti
                     changed = SelectionPlanner.Changed(preview, after) || !after.Complete;
                     if (changed) job = job with { Messages = [.. job.Messages, "Files or source availability changed during the live backup. This snapshot has incomplete coverage; no retention cleanup ran.", .. after.Warnings] };
                 }
-                job = job with { Backup = result.ExitCode == 3 || !preview.Complete || changed || !string.IsNullOrWhiteSpace(result.Error) ? Outcome.Incomplete : Outcome.Successful, Verification = Outcome.Running };
+                var complete = result.ExitCode == 0 && preview.Complete && !changed && string.IsNullOrWhiteSpace(result.Error);
+                job = job with { Backup = complete ? Outcome.Running : Outcome.Incomplete, Verification = Outcome.Running };
                 catalog.SaveJob(job); progress?.Report(new(job.ProjectName, "Verifying repository", 1));
                 (await restic.RunAsync(destination, ["check"], token)).EnsureSuccess("Verify new backup");
                 job = job with { Verification = Outcome.Successful };
                 catalog.SaveJob(job);
-                if (job.Backup == Outcome.Successful)
+                if (complete)
                 {
+                    progress?.Report(new(job.ProjectName, "Finalizing verified snapshot", 1));
                     (await restic.RunAsync(destination, ["tag", "--remove", "pending", "--add", "successful", snapshotId], token)).EnsureSuccess("Mark verified backup successful");
                     var snapshots = await restic.SnapshotsAsync(destination, token);
-                    job = job with { SnapshotId = snapshots.Single(s => s.TagValue("run") == job.Id).Id, Cleanup = Outcome.Running };
+                    job = job with { Backup = Outcome.Successful, SnapshotId = snapshots.Single(s => s.TagValue("run") == job.Id && s.Successful).Id, Cleanup = Outcome.Running };
                     catalog.SaveJob(job); progress?.Report(new(job.ProjectName, "Keeping latest ten versions", 1));
+                    token.ThrowIfCancellationRequested();
                     // Use explicit successful IDs in this stable series. Host, changing paths and per-run tags cannot split retention groups.
                     var obsolete = snapshots.Where(s => s.Successful && s.TagValue("series") == job.SeriesId && s.Coverage == job.Coverage).OrderByDescending(s => s.Time).Skip(10).Select(s => s.Id).ToList();
                     if (obsolete.Count > 0)

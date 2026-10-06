@@ -17,11 +17,13 @@ public static class CliDiscoveryTests
             var indexes = DiscoveryFixtures.Folder(directory, "empty-indexes");
             var userData = DiscoveryFixtures.AntigravityDatabase(directory, new Dictionary<string, string>
             { ["antigravityUnifiedStateSync.sidebarWorkspaces"] = DiscoveryFixtures.Sidebar(DiscoveryFixtures.FileUri(folder)) });
+            var vsCode = Path.Combine(directory, "vscode");
+            await ExtensionDiscoveryFixtures.Workspace(vsCode, "workspace", folder, new Dictionary<string, string> { ["GitHub.copilot-chat"] = "fixture-private-state" });
             var paths = new AppPaths(Path.Combine(directory, "catalog"));
-            var result = await Run("discover", "--data-dir", paths.DataDirectory, "--codex-state", state, "--claude-config", config, "--claude-projects", indexes, "--antigravity-user-data", userData);
+            var result = await Run("discover", "--data-dir", paths.DataDirectory, "--codex-state", state, "--claude-config", config, "--claude-projects", indexes, "--antigravity-user-data", userData, "--vscode-user-data", vsCode);
             result.EnsureSuccess("CLI discover all"); var discovery = Json.Read<DiscoveryResult>(result.Output);
             Assert(discovery is { Added: 1, Projects: 1, Roots: 1 } && discovery.Warnings.Count == 0 && result.Error.Length == 0, Json.Write(result));
-            var project = new CatalogStore(paths).Projects().Single(); Assert(project.DiscoverySources.Count == 3 && !project.Enabled && !project.Reviewed, "CLI skipped a provider or enrolled a candidate.");
+            var project = new CatalogStore(paths).Projects().Single(); Assert(project.DiscoverySources.Count == 5 && !project.Enabled && !project.Reviewed, "CLI skipped a provider or enrolled a candidate.");
             var programs = await Run("projects", "--data-dir", paths.DataDirectory); programs.EnsureSuccess("CLI project labels");
             Assert(Json.Read<List<ProjectEntry>>(programs.Output).Single().Id == project.Id, "CLI project identity changed.");
         });
@@ -39,6 +41,37 @@ public static class CliDiscoveryTests
             Assert(rejected.ExitCode == 1 && rejected.Output.Length == 0 && rejected.Error.Contains("Codex-only") && catalog.Export() == before, "Ambiguous legacy option changed catalog.");
             rejected = await Run("discover", "--data-dir", paths.DataDirectory, "--source", "unknown");
             Assert(rejected.ExitCode == 1 && catalog.Export() == before, "Unknown source accepted or changed catalog.");
+            foreach (var option in new[] { "--codex-home", "--vscode-user-data" })
+            {
+                rejected = await Run("discover", "--data-dir", paths.DataDirectory, "--state", state, option, directory);
+                Assert(rejected.ExitCode == 1 && catalog.Export() == before, "Legacy state option was combined with extension discovery.");
+            }
+        });
+
+        await tests.Run("CLI VS Code and Copilot source filters use the explicit portable directory", async () =>
+        {
+            var directory = Path.Combine(root, "extensions"); var ordinary = DiscoveryFixtures.Folder(directory, "ordinary"); var copilot = DiscoveryFixtures.Folder(directory, "copilot");
+            var vsCode = Path.Combine(directory, "portable-user-data"); await ExtensionDiscoveryFixtures.Workspace(vsCode, "ordinary", ordinary);
+            await ExtensionDiscoveryFixtures.Workspace(vsCode, "copilot", copilot, new Dictionary<string, string> { ["GitHub.copilot"] = "fixture-private-state" });
+            var paths = new AppPaths(Path.Combine(directory, "catalog"));
+            var result = await Run("discover", "--data-dir", paths.DataDirectory, "--source", "copilot", "--vscode-user-data", vsCode);
+            result.EnsureSuccess("Select Copilot discovery"); var catalog = new CatalogStore(paths);
+            Assert(catalog.Projects().Single().Roots.Single().Path == copilot && catalog.Projects().Single().DiscoverySources.Single().ProviderId == DiscoveryProviders.Copilot, "Copilot source scanned ordinary or real user workspaces.");
+            (await Run("discover", "--data-dir", paths.DataDirectory, "--source", "vscode", "--vscode-user-data", vsCode)).EnsureSuccess("Select VS Code discovery");
+            Assert(catalog.Projects().Count == 2 && catalog.Projects().All(p => p.DiscoverySources.Any(s => s.ProviderId == DiscoveryProviders.VsCode)), "Ordinary VS Code workspace missing.");
+            var status = await Run("hook-status", "--data-dir", paths.DataDirectory); status.EnsureSuccess("Hook status");
+            Assert(Json.Read<Dictionary<string, string>>(status.Output).Keys.ToHashSet().SetEquals(DiscoveryProviders.HookCapable), "CLI offered hooks for discovery-only providers.");
+            var unsupported = await Run("install-hook", "--data-dir", paths.DataDirectory, "--source", "copilot");
+            Assert(unsupported.ExitCode == 1, "CLI installed an unsupported Copilot hook.");
+        });
+
+        await tests.Run("CLI Codex home discovers extension metadata and retains the standalone source label", async () =>
+        {
+            var directory = Path.Combine(root, "codex-home"); var folder = DiscoveryFixtures.Folder(directory, "extension"); var home = Path.Combine(directory, "codex");
+            ExtensionDiscoveryFixtures.CodexDatabase(home, 5, [(folder, "vscode")]); var paths = new AppPaths(Path.Combine(directory, "catalog"));
+            var result = await Run("discover", "--data-dir", paths.DataDirectory, "--source", "codex", "--codex-home", home);
+            result.EnsureSuccess("Discover extension-only Codex project");
+            Assert(new CatalogStore(paths).Projects().Single().DiscoverySources.Single().ProviderId == DiscoveryProviders.Codex, "Codex home override scanned real editor sources or split the family label.");
         });
 
         await tests.Run("CLI manual registration shares folder identity with discovered candidates", async () =>

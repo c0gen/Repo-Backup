@@ -1,0 +1,10 @@
+Generated with the built-in image_gen tool.
+
+Use case: logo-brand
+Asset type: Windows desktop application icon for Repo Backup, a utility that saves versioned backups of Git repositories and project folders.
+Primary request: Generate one polished, distinctive app icon: a vivid blue project folder with a simple white Git branching symbol centered on its front, embraced by one thick cyan curved backup/restore arrow around the lower-right side. The folder and the single arrow form one cohesive compact silhouette.
+Style/medium: Crisp modern desktop icon with gently beveled surfaces and restrained dimensional depth. Bold simple geometry, clean edges, minimal detail, readable at small sizes.
+Color palette: Match the application's blue accents: royal blue #246DF0, light blue #68AEFF, a cyan highlight, and a high-contrast white branching symbol. Use darker blue only for shallow depth.
+Composition/framing: One square 1024 by 1024 icon, centered, occupying roughly 82 percent of the canvas with even transparent padding. Folder is shown almost front-on, with a slight perspective. Branch symbol consists of three large circular nodes and thick connecting strokes. One unambiguous large arrowhead.
+Scene/backdrop: Fully transparent background; transparency outside the icon, including the gaps in the curved arrow.
+Constraints: Exactly one icon, no letters, no words, no watermark, no border, no enclosing rounded-square tile, no sheet of variations, no decorative tiny details, no lock, no shield, no cloud, no floating shadow outside the silhouette. Strong contrast on both light and dark Windows desktop backgrounds.

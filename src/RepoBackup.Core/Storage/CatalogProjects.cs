@@ -103,7 +103,10 @@ public sealed partial class CatalogStore
                     {
                         Roots = project.Roots.Select(r => r.Id == match.Root.Id ? ProjectIdentity.Observe(r, [path]) : r).ToList(),
                         DiscoverySources = project.DiscoverySources.Append(source).Distinct().ToList(),
-                        ExternalId = project.ExternalId ?? externalId
+                        ExternalId = project.ExternalId ?? externalId,
+                        Reviewed = approved || project.Reviewed,
+                        Enabled = approved || project.Enabled,
+                        Dismissed = !approved && project.Dismissed
                     };
                     affected[project.Id] = project;
                 }

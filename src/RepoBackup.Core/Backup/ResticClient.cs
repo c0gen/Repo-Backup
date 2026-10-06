@@ -25,13 +25,23 @@ public sealed class ResticClient
     public async Task<ProcessResult> RunAsync(Destination destination, IEnumerable<string> args, CancellationToken token = default, Action<string>? output = null)
     {
         await VerifyExecutableAsync(token);
-        var password = credentials.Get(destination.Id);
-        var environment = new Dictionary<string, string> { ["RESTIC_PASSWORD"] = password, ["RESTIC_CACHE_DIR"] = paths.CacheDirectory, ["RESTIC_PASSWORD_FILE"] = "", ["RESTIC_PASSWORD_COMMAND"] = "", ["RESTIC_REPOSITORY_FILE"] = "" };
-        return await processes.RunAsync(Executable, new[] { "--repo", destination.Path, "--json" }.Concat(args), token, environment: environment, onOutput: output, secret: password);
+        var password = destination.Protection switch
+        {
+            DestinationProtection.RecoveryKey => credentials.Get(destination.Id),
+            DestinationProtection.PasswordFree => "",
+            _ => throw new ArgumentException("Unsupported destination protection mode.")
+        };
+        var environment = new Dictionary<string, string> { ["RESTIC_PASSWORD"] = password, ["RESTIC_CACHE_DIR"] = paths.CacheDirectory, ["RESTIC_PASSWORD_FILE"] = "", ["RESTIC_PASSWORD_COMMAND"] = "", ["RESTIC_KEY_HINT"] = "", ["RESTIC_REPOSITORY_FILE"] = "" };
+        var arguments = new List<string> { "--repo", destination.Path, "--json" };
+        if (destination.Protection == DestinationProtection.PasswordFree) arguments.Add("--insecure-no-password");
+        return await processes.RunAsync(Executable, arguments.Concat(args), token, environment: environment, onOutput: output, secret: password);
     }
     public async Task<string> RepositoryIdentityAsync(Destination destination, CancellationToken token = default)
     {
-        var result = await RunAsync(destination, ["cat", "config"], token); result.EnsureSuccess("Read repository identity");
+        var result = await RunAsync(destination, ["cat", "config"], token);
+        if (destination.Protection == DestinationProtection.PasswordFree && result.ExitCode == 12)
+            throw new IOException("This repository requires a recovery key. Choose recovery-key protection and load its key file.");
+        result.EnsureSuccess("Read repository identity");
         using var json = JsonDocument.Parse(result.Output); var id = json.RootElement.GetProperty("id").GetString()!;
         if (destination.RepositoryId is not null && destination.RepositoryId != id) throw new InvalidDataException("The destination contains a different backup repository. Select the correct drive or explicitly open the replacement repository.");
         return id;

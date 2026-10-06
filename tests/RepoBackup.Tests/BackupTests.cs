@@ -8,8 +8,9 @@ namespace RepoBackup.Tests;
 
 public static class BackupTests
 {
-    public static async Task RunAsync(TestRunner tests, Fixture fixture)
+    public static async Task RunAsync(TestRunner tests, Fixture fixture, DestinationProtection protection = DestinationProtection.RecoveryKey)
     {
+        Console.WriteLine("Backup/recovery suite: " + protection);
         var app = fixture.App;
         await tests.Run("Create dirty Git repository with two worktrees and a local submodule", fixture.PrepareAsync);
         await tests.Run("Preview includes Git, dirty files, ignored config, assets and worktrees", async () =>
@@ -21,14 +22,24 @@ public static class BackupTests
         });
         await tests.Run("Default exclusions preserve tracked dependency files, build and dist", async () => { var preview = await app.Planner.PreviewAsync(fixture.Project); Assert(preview.Files.Any(f => f.Path.EndsWith("node_modules\\tracked.txt")), "Tracked dependency excluded."); Assert(!preview.Files.Any(f => f.Path.EndsWith("node_modules\\cache.txt")), "Dependency cache included."); Assert(preview.Files.Any(f => f.Path.EndsWith("build\\keep.txt")) && preview.Files.Any(f => f.Path.EndsWith("dist\\keep.txt")), "Generic build folders excluded."); });
         await tests.Run("Exclusion overrides change the actual planned contents", async () => { var rules = fixture.Project.Exclusions with { ExcludedDirectories = [] }; var preview = await app.Planner.PreviewAsync(fixture.Project with { Exclusions = rules }); Assert(preview.Files.Any(f => f.Path.EndsWith("node_modules\\cache.txt")), "Override ignored."); });
-        await tests.Run("Initialize a pinned restic repository and record its identity", async () => { fixture.Destination = await app.Backups.AddDestinationAsync("Backup Drive", Path.Combine(fixture.Root, "repository")); Assert(fixture.Destination.RepositoryId?.Length == 64, "Repository identity missing."); });
+        await tests.Run("Initialize a pinned restic repository and record its identity", async () => { fixture.Destination = await app.Backups.AddDestinationAsync("Backup Drive", Path.Combine(fixture.Root, "repository"), protection: protection); Assert(fixture.Destination.RepositoryId?.Length == 64 && fixture.Destination.Protection == protection, "Repository identity or protection missing."); });
         await tests.Run("Imported destinations reconnect their key without losing identity or a valid existing key", async () =>
         {
-            var destination = fixture.Destination; var key = app.Credentials.Get(destination.Id);
-            await Throws<IOException>(() => app.Backups.AddDestinationAsync("Wrong key", destination.Path, "a-deliberately-invalid-recovery-key", openExisting: true));
-            Assert(app.Credentials.Get(destination.Id) == key, "Invalid recovery key destroyed the existing credential.");
-            app.Credentials.Delete(destination.Id);
-            var reconnected = await app.Backups.AddDestinationAsync(destination.Name, destination.Path, key, openExisting: true);
+            var destination = fixture.Destination;
+            string? key = null;
+            if (protection == DestinationProtection.RecoveryKey)
+            {
+                key = app.Credentials.Get(destination.Id);
+                await Throws<IOException>(() => app.Backups.AddDestinationAsync("Wrong key", destination.Path, "a-deliberately-invalid-recovery-key", openExisting: true));
+                Assert(app.Credentials.Get(destination.Id) == key, "Invalid recovery key destroyed the existing credential.");
+                app.Credentials.Delete(destination.Id);
+            }
+            else
+            {
+                await Throws<InvalidOperationException>(() => app.Backups.AddDestinationAsync("Wrong mode", destination.Path, "a-deliberately-invalid-recovery-key", openExisting: true));
+                Assert(!app.Credentials.Exists(destination.Id), "Password-free repository generated a credential.");
+            }
+            var reconnected = await app.Backups.AddDestinationAsync(destination.Name, destination.Path, key, openExisting: true, protection: protection);
             Assert(reconnected.Id == destination.Id && app.Catalog.Destinations().Count == 1, "Destination identity was duplicated."); fixture.Destination = reconnected;
         });
         await tests.Run("Backup creates one verified successful snapshot for the project", async () => { var result = (await app.Backups.RunAsync(fixture.Destination, [fixture.Project])).Single(); Assert(result.Backup == Outcome.Successful && result.Verification == Outcome.Successful && result.Cleanup == Outcome.Successful, Json.Write(result)); fixture.Snapshot = (await app.Restic.SnapshotsAsync(fixture.Destination)).Single(); Assert(fixture.Snapshot.Successful, "Snapshot not marked successful."); });
@@ -90,13 +101,45 @@ public static class BackupTests
             Assert((await app.Restic.SnapshotsAsync(fixture.Destination)).Count == before, "Destination failure removed earlier backups.");
         });
         await tests.Run("Repository verification reads and checks all stored data", async () => { var verification = await app.Backups.VerifyAsync(fixture.Destination); Assert(verification.Outcome == Outcome.Successful, verification.Message); });
-        await tests.Run("Fresh computer recovery needs only repository and exported recovery key", async () =>
+        await tests.Run("Fresh computer recovery needs only the backup drive and the key when protected", async () =>
         {
-            var fresh = new ApplicationServices(Path.Combine(fixture.Root, "fresh-catalog"), codexStatePath: fixture.State);
-            var opened = await fresh.Backups.AddDestinationAsync("Recovered Backup", fixture.Destination.Path, app.Credentials.Get(fixture.Destination.Id), openExisting: true);
+            var expectedHead = await fixture.GitOutput(fixture.Main, "rev-parse", "HEAD");
+            var expectedIndex = await fixture.GitOutput(fixture.Main, "show", ":staged.txt");
+            var hashes = new Dictionary<string, string>();
+            foreach (var relative in new[] { "README.md", "staged.txt", "untracked.txt", ".env", "assets\\texture.txt", "module\\module.txt" })
+                hashes[relative] = await Fixture.HashAsync(Path.Combine(fixture.Main, relative));
+            var copiedRepository = Path.Combine(fixture.Root, "replacement-drive", "backup");
+            CopyRepository(fixture.Destination.Path, copiedRepository);
+            string? recoveryKey = null;
+            if (protection == DestinationProtection.RecoveryKey)
+            {
+                var keyFile = Path.Combine(fixture.Root, "exported-recovery.key");
+                await app.Backups.ExportRecoveryKeyAsync(fixture.Destination, keyFile);
+                recoveryKey = await File.ReadAllTextAsync(keyFile);
+            }
+            // Make both the original source paths and saved Windows credentials unavailable.
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Move(Path.Combine(fixture.Root, "sources"), Path.Combine(fixture.Root, "offline-sources"));
+            Directory.Move(app.Paths.DataDirectory, Path.Combine(fixture.Root, "offline-catalog"));
+            var fresh = new ApplicationServices(Path.Combine(fixture.Root, "fresh-catalog"), discoveryProviders: []);
+            var opened = await fresh.Backups.AddDestinationAsync("Recovered Backup", copiedRepository, recoveryKey, openExisting: true, protection: protection);
             Assert(await fresh.Restore.RebuildCatalogAsync(opened) == 1, "Project identity not recovered."); Assert(fresh.Catalog.Projects()[0].Id == fixture.Project.Id && !fresh.Catalog.Projects()[0].Enabled, "Recovered identity or review state incorrect."); Assert(fresh.Catalog.Selections().Any(s => s.Id == selection.Id), "Selection identity lost.");
-            var latest = (await fresh.Restic.SnapshotsAsync(opened)).First(s => s.Successful && s.Coverage == Coverage.FullProject); await fresh.Restore.RestoreAsync(opened, latest, Path.Combine(fixture.Root, "fresh-restore"));
+            var latest = (await fresh.Restic.SnapshotsAsync(opened)).First(s => s.Successful && s.Coverage == Coverage.FullProject);
+            var target = Path.Combine(fixture.Root, "fresh-restore"); await fresh.Restore.RestoreAsync(opened, latest, target);
+            var manifest = await fresh.Restic.ManifestAsync(opened, latest);
+            var restored = Path.Combine(target, "sources", manifest.Sources.Single(s => s.OriginalPath == fixture.Main).RestoreFolder);
+            foreach (var (relative, hash) in hashes) Assert(await Fixture.HashAsync(Path.Combine(restored, relative)) == hash, "Fresh-computer hash mismatch: " + relative);
+            Assert(await fixture.GitOutput(restored, "rev-parse", "HEAD") == expectedHead && await fixture.GitOutput(restored, "show", ":staged.txt") == expectedIndex, "Fresh-computer Git history or index changed.");
+            Assert(fresh.Credentials.Exists(opened.Id) == (protection == DestinationProtection.RecoveryKey), "Fresh recovery used the wrong credential mode.");
         });
+    }
+    private static void CopyRepository(string source, string target)
+    {
+        Directory.CreateDirectory(target);
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+            File.Copy(file, Path.Combine(target, Path.GetRelativePath(source, file)));
     }
     private sealed class ImmediateProgress(Action<BackupProgress> action) : IProgress<BackupProgress> { public void Report(BackupProgress value) => action(value); }
 }

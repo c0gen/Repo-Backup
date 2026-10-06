@@ -45,10 +45,24 @@ public sealed class WindowsScheduler(AppPaths paths, CatalogStore catalog, Proce
         (await processes.RunAsync("schtasks.exe", ["/Create", "/TN", "RepoBackup-" + schedule.Id, "/XML", xmlPath, "/F"], token)).EnsureSuccess("Save Windows backup schedule");
         catalog.SaveSchedules(catalog.Schedules().Where(s => s.Id != schedule.Id).Append(schedule).ToList());
     }
-    public async Task DeleteAsync(string id, CancellationToken token = default)
+    public Task DeleteAsync(string id, CancellationToken token = default)
     {
         if (!Guid.TryParse(id, out _)) throw new ArgumentException("Invalid schedule identity.");
-        (await processes.RunAsync("schtasks.exe", ["/Delete", "/TN", "RepoBackup-" + id, "/F"], token)).EnsureSuccess("Remove Windows schedule");
+        token.ThrowIfCancellationRequested();
+        dynamic service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service")!)!;
+        object? folder = null;
+        try
+        {
+            service.Connect(); folder = service.GetFolder("\\");
+            try { ((dynamic)folder).DeleteTask("RepoBackup-" + id, 0); }
+            catch (Exception e) when (e is System.Runtime.InteropServices.COMException or FileNotFoundException && e.HResult == unchecked((int)0x80070002)) { }
+        }
+        finally
+        {
+            if (folder is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(folder);
+            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(service);
+        }
         catalog.SaveSchedules(catalog.Schedules().Where(s => s.Id != id).ToList());
+        return Task.CompletedTask;
     }
 }

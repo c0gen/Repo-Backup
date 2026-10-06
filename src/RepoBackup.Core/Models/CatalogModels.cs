@@ -3,6 +3,7 @@ namespace RepoBackup.Core.Models;
 public enum Coverage { FullProject, PartialSelection }
 public enum SourceKind { Project, Worktree, GitMetadata }
 public enum Outcome { NotRun, Running, Successful, Failed, Incomplete, Cancelled, Interrupted }
+public enum DestinationProtection { RecoveryKey, PasswordFree }
 
 public sealed record SourceRoot(string Id, string Path)
 {
@@ -48,6 +49,8 @@ public sealed record Destination
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public required string Name { get; init; }
     public required string Path { get; init; }
+    // Older catalogs contain only recovery-key-protected repositories.
+    public DestinationProtection Protection { get; init; } = DestinationProtection.RecoveryKey;
     public string? RepositoryId { get; init; }
     public DateTimeOffset? VerifiedAt { get; init; }
 }

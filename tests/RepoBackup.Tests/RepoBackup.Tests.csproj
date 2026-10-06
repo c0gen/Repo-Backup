@@ -1,4 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><UseWPF>true</UseWPF></PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/RepoBackup.Core/RepoBackup.Core.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../../src/RepoBackup.Desktop/RepoBackup.Desktop.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../../src/RepoBackup.Cli/RepoBackup.Cli.csproj" /></ItemGroup>
 </Project>

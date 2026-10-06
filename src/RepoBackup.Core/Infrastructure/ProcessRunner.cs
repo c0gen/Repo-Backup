@@ -11,9 +11,9 @@ public sealed record ProcessResult(int ExitCode, string Output, string Error)
     }
 }
 
-public sealed class ProcessRunner
+public class ProcessRunner
 {
-    public async Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default,
+    public virtual async Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default,
         string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null)
     {
         var start = new ProcessStartInfo(executable)

@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using RepoBackup.Core.Application;
+using RepoBackup.Core.Infrastructure;
 using RepoBackup.Desktop.Infrastructure;
 using RepoBackup.Desktop.ViewModels;
 
@@ -9,6 +10,14 @@ namespace RepoBackup.Desktop;
 
 public partial class App : System.Windows.Application
 {
+    private readonly InstallationLifetime installationLifetime = new();
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        base.OnExit(e);
+        installationLifetime.Dispose();
+    }
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);

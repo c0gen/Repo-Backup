@@ -10,15 +10,17 @@ public static class WindowsIntegrationTests
 {
     public static async Task RunAsync(TestRunner tests, string root)
     {
-        await tests.Run("Windows Task Scheduler runs the hidden backup runner with the GUI closed", async () =>
+        foreach (var protection in Enum.GetValues<DestinationProtection>())
+        await tests.Run("Windows Task Scheduler runs the hidden backup runner with the GUI closed: " + protection, async () =>
         {
+            var fixtureRoot = Path.Combine(root, "scheduler-" + protection); Directory.CreateDirectory(fixtureRoot);
             var runner = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "src", "RepoBackup.Runner", "bin", "Release", "net10.0-windows", "RepoBackup.Runner.exe"));
-            var state = Path.Combine(root, "scheduled-codex.json"); await File.WriteAllTextAsync(state, "{\"local-projects\":{}}");
-            var app = new ApplicationServices(Path.Combine(root, "scheduled-catalog"), schedulerRunnerPath: runner, codexStatePath: state);
+            var state = Path.Combine(fixtureRoot, "scheduled-codex.json"); await File.WriteAllTextAsync(state, "{\"local-projects\":{}}");
+            var app = new ApplicationServices(Path.Combine(fixtureRoot, "scheduled-catalog"), schedulerRunnerPath: runner, codexStatePath: state);
             app.Catalog.SaveSetting("discoveryOptions", new DiscoveryOptions { Source = DiscoveryProviders.Codex, CodexStatePath = state });
-            var source = Path.Combine(root, "scheduled-source"); Directory.CreateDirectory(source); await File.WriteAllTextAsync(Path.Combine(source, "fixture.txt"), "Headless scheduled backup fixture");
+            var source = Path.Combine(fixtureRoot, "scheduled-source"); Directory.CreateDirectory(source); await File.WriteAllTextAsync(Path.Combine(source, "fixture.txt"), "Headless scheduled backup fixture");
             app.Catalog.RegisterCandidate("Scheduler fixture", [source], "Fixture", approved: true);
-            var destination = await app.Backups.AddDestinationAsync("Scheduler fixture repository", Path.Combine(root, "scheduled-repository"));
+            var destination = await app.Backups.AddDestinationAsync("Scheduler fixture repository", Path.Combine(fixtureRoot, "scheduled-repository"), protection: protection);
             var schedule = new ScheduleDefinition { DestinationId = destination.Id, Name = "Isolated acceptance fixture", Enabled = true, Kind = ScheduleKind.Daily };
             var installed = false;
             try

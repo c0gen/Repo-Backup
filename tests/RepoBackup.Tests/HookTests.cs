@@ -43,7 +43,7 @@ public static class HookTests
         await tests.Run("Hook configuration writes make one backup, preserve invalid files and wait for verification", async () =>
         {
             var directory = DiscoveryFixtures.Folder(root, "configuration"); var runner = NativeProcessFixture.ProgramPath("RepoBackup.Runner");
-            foreach (var provider in DiscoveryProviders.All)
+            foreach (var provider in DiscoveryProviders.HookCapable)
             {
                 var config = Path.Combine(directory, provider + ".json"); const string original = "{\"fixture-unrelated\":{\"enabled\":false}}";
                 await File.WriteAllTextAsync(config, original); var paths = new AppPaths(Path.Combine(directory, provider, "catalog")); var catalog = new CatalogStore(paths);
@@ -79,7 +79,7 @@ public static class HookTests
             var paths = new AppPaths(Path.Combine(directory, "catalog")); var catalog = new CatalogStore(paths); var project = catalog.RegisterCandidate("Dismissed", [first], "Manual");
             catalog.SaveProject(project with { Dismissed = true, Reviewed = true });
             var job = new JobRecord { ProjectId = project.Id, ProjectName = project.Name, DestinationId = "fixture", SeriesId = "fixture", OwnerProcessId = int.MaxValue, OwnerStartTicks = 1 }; catalog.SaveJob(job);
-            foreach (var provider in DiscoveryProviders.All)
+            foreach (var provider in DiscoveryProviders.HookCapable)
             {
                 var json = provider == DiscoveryProviders.Antigravity
                     ? Json.Write(new { workspacePaths = new[] { first, second }, userPrompt = "private-fixture-prompt" })
@@ -125,7 +125,7 @@ public static class HookTests
             var directPaths = new AppPaths(Path.Combine(directory, "direct-catalog"));
             var direct = await NativeProcessFixture.RunAsync(runner, ["register-hook", "--source", DiscoveryProviders.Codex, "--data-dir", directPaths.DataDirectory], Json.Write(new { cwd = source }));
             Assert(direct.ExitCode == 0 && new CatalogStore(directPaths).Projects().Count == 1, "Hidden runner did not receive direct stdin.");
-            foreach (var provider in DiscoveryProviders.All)
+            foreach (var provider in DiscoveryProviders.HookCapable)
             {
                 var json = JsonSerializer.Serialize(provider == DiscoveryProviders.Antigravity ? (object)new { workspacePaths = new[] { source }, userPrompt = "private-fixture 雪" } : new { cwd = source, transcript_path = "private-fixture 雪" }, new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
                 var command = HookCommandBuilder.Build(runner, provider, paths.DataDirectory);

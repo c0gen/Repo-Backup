@@ -12,11 +12,19 @@ public sealed class ProjectDiscoveryService(CatalogStore catalog, IEnumerable<IP
     {
         options ??= new();
         if (options.Source != "all" && !DiscoveryProviders.All.Contains(options.Source))
-            throw new ArgumentException("Choose source codex, claude-code, antigravity, or all.");
+            throw new ArgumentException("Choose source codex, claude-code, antigravity, vscode, copilot, or all.");
         var result = new List<IProjectDiscoveryProvider>();
-        if (options.Source is "all" or DiscoveryProviders.Codex) result.Add(new CodexDiscovery(options.CodexStatePath));
+        if (options.Source is "all" or DiscoveryProviders.Codex) result.Add(new CodexDiscovery(options.CodexStatePath, options.CodexHomeDirectory));
         if (options.Source is "all" or DiscoveryProviders.ClaudeCode) result.Add(new ClaudeCodeDiscovery(options.ClaudeConfigPath, options.ClaudeProjectsDirectory));
         if (options.Source is "all" or DiscoveryProviders.Antigravity) result.Add(new AntigravityDiscovery(options.AntigravityUserDataDirectory));
+        if (options.Source is "all" or DiscoveryProviders.VsCode or DiscoveryProviders.Copilot)
+            result.Add(new VsCodeDiscovery(options.VsCodeUserDataDirectory, options.Source == "all" ? DiscoveryProviders.VsCode : options.Source));
+        // Explicit native metadata overrides must remain isolated from real editor
+        // state. The editor override can opt extension discovery back in.
+        else if (options.Source == DiscoveryProviders.Codex && (options.VsCodeUserDataDirectory is not null || (options.CodexStatePath is null && options.CodexHomeDirectory is null)))
+            result.Add(new VsCodeDiscovery(options.VsCodeUserDataDirectory, DiscoveryProviders.Codex));
+        else if (options.Source == DiscoveryProviders.ClaudeCode && (options.VsCodeUserDataDirectory is not null || (options.ClaudeConfigPath is null && options.ClaudeProjectsDirectory is null)))
+            result.Add(new VsCodeDiscovery(options.VsCodeUserDataDirectory, DiscoveryProviders.ClaudeCode));
         return result;
     }
 
@@ -36,7 +44,8 @@ public sealed class ProjectDiscoveryService(CatalogStore catalog, IEnumerable<IP
                 foreach (var candidate in result.Projects.OrderByDescending(p => p.Roots.Count))
                 {
                     token.ThrowIfCancellationRequested();
-                    added += catalog.RegisterDiscovered(candidate.Name, candidate.Roots, provider.Id, candidate.ExternalId).Added;
+                    foreach (var source in candidate.AssociatedProviders.Prepend(provider.Id).Distinct())
+                        added += catalog.RegisterDiscovered(candidate.Name, candidate.Roots, source, candidate.ExternalId).Added;
                 }
             }
             catch (Exception e) when (DiscoveryFiles.IsReadError(e) || e is SqliteException)

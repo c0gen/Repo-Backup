@@ -10,7 +10,7 @@ public static class HookRegistration
 {
     public static List<string> Parse(string provider, string json)
     {
-        if (!DiscoveryProviders.All.Contains(provider)) throw new ArgumentException("Unknown hook provider.");
+        if (!DiscoveryProviders.HookCapable.Contains(provider)) throw new ArgumentException("Unknown hook provider.");
         // Windows PowerShell 5.1 may prepend a UTF-8 BOM to a redirected native
         // stream. Console.In exposes it as a character rather than stripping it.
         using var document = JsonDocument.Parse(json.TrimStart('\uFEFF')); var root = document.RootElement;
@@ -53,7 +53,7 @@ public static class HookRegistration
                 var log = Path.Combine(paths.DataDirectory, "hook-errors.log");
                 if (!File.Exists(log) || new FileInfo(log).Length < 64 * 1024)
                     await File.AppendAllTextAsync(log, DateTimeOffset.UtcNow.ToString("O") + " " +
-                        (DiscoveryProviders.All.Contains(provider) ? provider : "unknown") + " registration unavailable (" + error.GetType().Name + ")\n", CancellationToken.None).ConfigureAwait(false);
+                        (DiscoveryProviders.HookCapable.Contains(provider) ? provider : "unknown") + " registration unavailable (" + error.GetType().Name + ")\n", CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception) { }
             return false;

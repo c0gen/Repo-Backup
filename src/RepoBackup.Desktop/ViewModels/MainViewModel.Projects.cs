@@ -20,7 +20,7 @@ public sealed partial class MainViewModel
             var path = dialogs.Folder("Scan for Git repositories — results will need review"); if (path is null) return;
             await OperateAsync(async token => { ProgressStage = "Scanning repositories"; var count = await Services.Discovery.ScanAsync(path, token); StatusMessage = $"Found {count} repositories for review."; });
         });
-        ApproveCommand = new Infrastructure.RelayCommand(p => { var item = (ProjectItem)p!; Services.Catalog.SaveProject(item.Project with { Reviewed = true, Enabled = true }); Reload(); StatusMessage = item.Name + " included."; }, _ => IsIdle);
+        ApproveCommand = new Infrastructure.RelayCommand(p => { var item = (ProjectItem)p!; Services.Catalog.SaveProject(item.Project with { Reviewed = true, Enabled = true, Dismissed = false }); Reload(); StatusMessage = item.Name + " included."; }, _ => IsIdle);
         DismissCommand = new Infrastructure.RelayCommand(p => { var item = (ProjectItem)p!; Services.Catalog.SaveProject(item.Project with { Reviewed = true, Dismissed = true, Enabled = false }); Reload(); }, _ => IsIdle);
         RelinkCommand = Command(() =>
         {

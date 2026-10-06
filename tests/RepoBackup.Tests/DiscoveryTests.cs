@@ -133,6 +133,55 @@ public static class DiscoveryTests
             Assert(await Fixture.HashAsync(database) == hash && !catalog.Export().Contains("private-invalid") && !result.Warnings.Single().Contains("private-invalid"), "Bad registry changed or leaked source data.");
         });
 
+        await tests.Run("Stale Antigravity workspace files on an available volume are skipped without changing existing projects", async () =>
+        {
+            var directory = Path.Combine(root, "stale-workspaces"); var oldRoot = DiscoveryFixtures.Folder(directory, "old-project");
+            var folder = DiscoveryFixtures.Folder(directory, "current-project"); var missing = Path.Combine(directory, "removed-directory", "Old.code-workspace");
+            var userData = DiscoveryFixtures.AntigravityDatabase(directory, new Dictionary<string, string>
+            {
+                ["history.recentlyOpenedPathsList"] = Json.Write(new { entries = new object[]
+                { new { workspace = new { configPath = DiscoveryFixtures.FileUri(missing) } }, new { folderUri = DiscoveryFixtures.FileUri(folder) } } })
+            });
+            var metadata = DiscoveryFixtures.Folder(userData, "User\\workspaceStorage\\stale");
+            var metadataFile = Path.Combine(metadata, "workspace.json");
+            await File.WriteAllTextAsync(metadataFile, Json.Write(new { workspace = DiscoveryFixtures.FileUri(Path.Combine(directory, "Old.workspace.json")) }));
+            var catalog = DiscoveryFixtures.Catalog(directory); var existing = catalog.RegisterCandidate("Existing", [oldRoot], "Manual", approved: true);
+            var before = Json.Write(existing); var database = Path.Combine(userData, "User", "globalStorage", "state.vscdb");
+            var databaseHash = await Fixture.HashAsync(database); var metadataHash = await Fixture.HashAsync(metadataFile);
+            var result = await new ProjectDiscoveryService(catalog, [new AntigravityDiscovery(userData)]).RefreshAsync();
+            Assert(result.Added == 1 && result.Projects == 2 && result.Warnings.Count == 0, Json.Write(result));
+            Assert(Json.Write(catalog.Projects().Single(p => p.Id == existing.Id)) == before, "Stale reference changed an existing project.");
+            Assert(await Fixture.HashAsync(database) == databaseHash && await Fixture.HashAsync(metadataFile) == metadataHash, "Discovery modified Antigravity metadata.");
+        });
+
+        await tests.Run("Antigravity referenced workspaces on an unavailable volume still warn", async () =>
+        {
+            var directory = Path.Combine(root, "offline-workspace"); var folder = DiscoveryFixtures.Folder(directory, "current-project");
+            var volume = Enumerable.Range('D', 23).Select(letter => ((char)letter) + ":\\").First(path => !Directory.Exists(path));
+            var userData = DiscoveryFixtures.AntigravityDatabase(directory, new Dictionary<string, string>
+            {
+                ["history.recentlyOpenedPathsList"] = Json.Write(new { entries = new object[]
+                { new { workspace = new { configPath = DiscoveryFixtures.FileUri(Path.Combine(volume, "Unavailable.code-workspace")) } }, new { folderUri = DiscoveryFixtures.FileUri(folder) } } })
+            });
+            var result = await new ProjectDiscoveryService(DiscoveryFixtures.Catalog(directory), [new AntigravityDiscovery(userData)]).RefreshAsync();
+            Assert(result.Added == 1 && result.Warnings.Count == 1 && result.Warnings[0].StartsWith("Antigravity referenced workspace"), Json.Write(result));
+        });
+
+        await tests.Run("Locked and malformed Antigravity workspace files warn while valid folders are discovered", async () =>
+        {
+            var directory = Path.Combine(root, "unreadable-workspaces"); var folder = DiscoveryFixtures.Folder(directory, "current-project");
+            var lockedFile = Path.Combine(directory, "Locked.code-workspace"); var invalidFile = Path.Combine(directory, "Invalid.code-workspace");
+            await File.WriteAllTextAsync(lockedFile, "{\"folders\":[]}"); await File.WriteAllTextAsync(invalidFile, "private-invalid-workspace-fixture");
+            var userData = DiscoveryFixtures.AntigravityDatabase(directory, new Dictionary<string, string>
+            {
+                ["history.recentlyOpenedPathsList"] = Json.Write(new { entries = new object[]
+                { new { workspace = new { configPath = DiscoveryFixtures.FileUri(lockedFile) } }, new { workspace = new { configPath = DiscoveryFixtures.FileUri(invalidFile) } }, new { folderUri = DiscoveryFixtures.FileUri(folder) } } })
+            });
+            using var locked = new FileStream(lockedFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            var result = await new ProjectDiscoveryService(DiscoveryFixtures.Catalog(directory), [new AntigravityDiscovery(userData)]).RefreshAsync();
+            Assert(result.Added == 1 && result.Warnings.Count == 2 && result.Warnings.All(w => w.StartsWith("Antigravity referenced workspace") && !w.Contains("private-invalid")), Json.Write(result));
+        });
+
         await tests.Run("Missing default installations produce no warnings and cancellation propagates", async () =>
         {
             var directory = DiscoveryFixtures.Folder(root, "missing"); var oldCodex = Environment.GetEnvironmentVariable("CODEX_HOME"); var oldClaude = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");

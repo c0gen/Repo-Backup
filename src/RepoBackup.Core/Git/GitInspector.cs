@@ -5,9 +5,18 @@ namespace RepoBackup.Core.Git;
 
 public sealed class GitInspector(ProcessRunner processes)
 {
-    private static readonly Dictionary<string, string> ReadEnvironment = new() { ["GIT_OPTIONAL_LOCKS"] = "0", ["GIT_TERMINAL_PROMPT"] = "0" };
+    private static readonly Dictionary<string, string> ReadEnvironment = CreateReadEnvironment();
+
+    private static Dictionary<string, string> CreateReadEnvironment()
+    {
+        var environment = new Dictionary<string, string> { ["GIT_OPTIONAL_LOCKS"] = "0", ["GIT_TERMINAL_PROMPT"] = "0" };
+        if (Path.GetDirectoryName(BundledTools.GitExecutable) is { Length: > 0 } directory)
+            environment["PATH"] = directory + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+        return environment;
+    }
+
     public Task<ProcessResult> ReadAsync(string root, IEnumerable<string> args, CancellationToken token = default) =>
-        processes.RunAsync("git", new[] { "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", root }.Concat(args), token, environment: ReadEnvironment);
+        processes.RunAsync(BundledTools.GitExecutable, new[] { "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", root }.Concat(args), token, environment: ReadEnvironment);
 
     public Task<List<(string Path, SourceKind Kind)>> AssociatedSourcesAsync(string root, List<string> warnings, CancellationToken token) =>
         AssociatedSourcesAsync(root, warnings, token, new(StringComparer.OrdinalIgnoreCase));

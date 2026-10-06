@@ -9,86 +9,111 @@ public sealed partial class MainViewModel
     private void InitializeProjectCommands()
     {
         RefreshCommand = Command(RefreshAsync);
-        AddFolderCommand = Command(() =>
+        AddFolderCommand = Command(async () =>
         {
             var path = dialogs.Folder("Add a project or folder to back up");
-            if (path is not null) { Services.Catalog.RegisterCandidate(PathSafety.DisplayName(path), [path], "Manual", approved: true); Reload(); StatusMessage = "Folder added."; }
-            return Task.CompletedTask;
+            if (path is not null) await OperateAsync(async token =>
+            {
+                ProgressStage = "Adding folder…";
+                await Task.Run(() => Services.Catalog.RegisterCandidate(PathSafety.DisplayName(path), [path], "Manual", approved: true), token);
+                StatusMessage = "Folder added.";
+            });
         });
         ScanCommand = Command(async () =>
         {
             var path = dialogs.Folder("Scan for Git repositories — results will need review"); if (path is null) return;
-            await OperateAsync(async token => { ProgressStage = "Scanning repositories"; var count = await Services.Discovery.ScanAsync(path, token); StatusMessage = $"Found {count} repositories for review."; });
+            await DiscoverAsync(async token => { var count = await Services.Discovery.ScanAsync(path, token); return new Core.Discovery.DiscoveryResult(count, count, 0, []); });
         });
-        ApproveCommand = new Infrastructure.RelayCommand(p => { var item = (ProjectItem)p!; Services.Catalog.SaveProject(item.Project with { Reviewed = true, Enabled = true, Dismissed = false }); Reload(); StatusMessage = item.Name + " included."; }, _ => IsIdle);
-        DismissCommand = new Infrastructure.RelayCommand(p => { var item = (ProjectItem)p!; Services.Catalog.SaveProject(item.Project with { Reviewed = true, Dismissed = true, Enabled = false }); Reload(); }, _ => IsIdle);
-        RelinkCommand = Command(() =>
+        ApproveCommand = new Infrastructure.AsyncCommand(async p =>
         {
-            if (SelectedProject is null) return Task.CompletedTask;
+            var item = (ProjectItem)p!;
+            await OperateAsync(async token =>
+            {
+                ProgressStage = "Including project…";
+                await Task.Run(() => Services.Catalog.SaveProject(item.Project with { Reviewed = true, Enabled = true, Dismissed = false }), token);
+                StatusMessage = item.Name + " included.";
+            });
+        }, dialogs.Error, () => CanEditCatalog && !DiscoveryLoad.IsLoading);
+        DismissCommand = new Infrastructure.AsyncCommand(async p =>
+        {
+            var item = (ProjectItem)p!;
+            await OperateAsync(async token =>
+            {
+                ProgressStage = "Dismissing project…";
+                await Task.Run(() => Services.Catalog.SaveProject(item.Project with { Reviewed = true, Dismissed = true, Enabled = false }), token);
+            });
+        }, dialogs.Error, () => CanEditCatalog && !DiscoveryLoad.IsLoading);
+        RelinkCommand = Command(async () =>
+        {
+            if (SelectedProject is null) return;
             var chooser = new RootPickerDialog(SelectedProject.Project.Roots) { Owner = dialogs.Owner };
-            if (chooser.ShowDialog() != true || chooser.SelectedRoot is null) return Task.CompletedTask;
-            var path = dialogs.Folder("Locate the moved source folder"); if (path is not null) { Services.Catalog.RelinkRoot(SelectedProject.Id, chooser.SelectedRoot.Id, path); Reload(); StatusMessage = "Source relinked; identity and history preserved."; }
-            return Task.CompletedTask;
+            if (chooser.ShowDialog() != true || chooser.SelectedRoot is null) return;
+            var path = dialogs.Folder("Locate the moved source folder"); if (path is not null) { Services.Catalog.RelinkRoot(SelectedProject.Id, chooser.SelectedRoot.Id, path); await ReloadAsync(); StatusMessage = "Source relinked; identity and history preserved."; }
+            return;
         }, () => SelectedProject is not null);
-        SaveSelectionCommand = Command(() =>
+        SaveSelectionCommand = Command(async () =>
         {
-            if (SelectedProject is null) return Task.CompletedTask;
+            if (SelectedProject is null) return;
             var dialog = new FolderSelectionDialog(SelectedProject.Project, ActiveSelection?.Selection) { Owner = dialogs.Owner };
-            if (dialog.ShowDialog() == true && dialog.Selection is { } selected) { Services.Catalog.SaveSelection(selected); Reload(); ActiveSelection = Selections.Single(s => s.Selection?.Id == selected.Id); StatusMessage = "Saved partial selection. Full-project recovery points are separate."; }
-            return Task.CompletedTask;
+            if (dialog.ShowDialog() == true && dialog.Selection is { } selected) { Services.Catalog.SaveSelection(selected); await ReloadAsync(); ActiveSelection = Selections.Single(s => s.Selection?.Id == selected.Id); StatusMessage = "Saved partial selection. Full-project recovery points are separate."; }
+            return;
         }, () => SelectedProject is not null);
-        EditExclusionsCommand = Command(() =>
+        EditExclusionsCommand = Command(async () =>
         {
-            if (SelectedProject is null) return Task.CompletedTask;
+            if (SelectedProject is null) return;
             var current = ActiveSelection?.Selection?.Exclusions ?? SelectedProject.Project.Exclusions;
             var dialog = new ExclusionsDialog(current) { Owner = dialogs.Owner };
             if (dialog.ShowDialog() == true)
             {
                 if (ActiveSelection?.Selection is { } selection) Services.Catalog.SaveSelection(selection with { Exclusions = dialog.Rules });
                 else Services.Catalog.SaveProject(SelectedProject.Project with { Exclusions = dialog.Rules });
-                Reload(); _ = UpdatePreviewAsync();
+                await ReloadAsync(); _ = UpdatePreviewAsync();
             }
-            return Task.CompletedTask;
+            return;
         }, () => SelectedProject is not null);
     }
-    private async Task RefreshAsync()
+    public Func<CancellationToken, Task<Core.Discovery.DiscoveryResult>>? DiscoveryLoader { get; set; }
+    public string DiscoveryWarningText { get; private set; } = "";
+    public bool HasDiscoveryWarnings => DiscoveryWarningText.Length > 0;
+    public Task RefreshDiscoveryAsync() => RefreshAsync();
+    public void CancelDiscovery() => DiscoveryLoad.Cancel();
+    private Task RefreshAsync() => DiscoverAsync(token => DiscoveryLoader?.Invoke(token) ?? Services.Discovery.RefreshAsync(token: token));
+    private async Task DiscoverAsync(Func<CancellationToken, Task<Core.Discovery.DiscoveryResult>> discover)
     {
-        await OperateAsync(async token =>
+        using var request = DiscoveryLoad.Begin();
+        DiscoveryWarningText = ""; Raise(nameof(DiscoveryWarningText)); Raise(nameof(HasDiscoveryWarnings));
+        try
         {
-            ProgressStage = "Refreshing projects from Codex, Claude Code and Antigravity";
-            var result = await Services.Discovery.RefreshAsync(token: token);
-            StatusMessage = result.Warnings.Count == 0 ? $"Discovery refreshed · {result.Added} new projects." : string.Join(" · ", result.Warnings);
-        });
+            var result = await discover(request.Token);
+            if (!DiscoveryLoad.Accepts(request)) return;
+            DiscoveryWarningText = string.Join("\n", result.Warnings); Raise(nameof(DiscoveryWarningText)); Raise(nameof(HasDiscoveryWarnings));
+            await ReloadAsync();
+            if (!DiscoveryLoad.Accepts(request)) return;
+            if (!CatalogLoad.IsReady) throw new InvalidOperationException("Discovery finished, but its results could not be loaded. Retry the catalog load.");
+            StatusMessage = $"Discovery refreshed · {result.Added} new projects.";
+            DiscoveryLoad.Complete(request);
+        }
+        catch (OperationCanceledException) { DiscoveryLoad.Cancel(request); }
+        catch (Exception error) { DiscoveryLoad.Fail(request, error); }
     }
     private async Task UpdatePreviewAsync()
     {
-        previewCancellation?.Cancel(); var cancellation = new CancellationTokenSource(); previewCancellation = cancellation;
+        using var request = PreviewLoad.Begin();
         var project = SelectedProject?.Project; var selection = ActiveSelection?.Selection;
         preview = null; SourceTree.Clear(); UpdatePreviewProperties();
-        if (project is null) { previewCancellation = null; cancellation.Dispose(); return; }
+        if (project is null) { PreviewLoad.Cancel(request); return; }
         try
         {
-            var loaded = await Services.Planner.PreviewAsync(project, selection, cancellation.Token);
-            if (cancellation.IsCancellationRequested) return;
+            var loaded = await (PreviewLoader?.Invoke(project, selection, request.Token) ?? Task.Run(() => Services.Planner.PreviewAsync(project, selection, request.Token), request.Token));
+            if (!PreviewLoad.Accepts(request)) return;
+            var nodes = await Task.Run(() => PreviewSources.Build(loaded, selection is null), request.Token);
+            if (!PreviewLoad.Accepts(request)) return;
             preview = loaded;
-            foreach (var source in loaded.Sources.Where(s => s.Kind != SourceKind.Worktree))
-            {
-                var children = new List<SourceNode>();
-                if (selection is null && source.Kind != SourceKind.GitMetadata)
-                {
-                    children.Add(new("Working files", "Staged, unstaged & untracked", "\uE73E", []));
-                    if (Directory.Exists(Path.Combine(source.OriginalPath, ".git")) || File.Exists(Path.Combine(source.OriginalPath, ".git"))) children.Add(new(".git · Git history", "Branches, index & local Git data", "\uE73E", []));
-                    children.Add(new("Configuration & assets", ".env and ignored configuration included", "\uE73E", []));
-                }
-                SourceTree.Add(new(PathSafety.DisplayName(source.OriginalPath), source.OriginalPath, source.Kind == SourceKind.GitMetadata ? "\uE8F1" : "\uE8B7", children));
-            }
-            var worktrees = loaded.Sources.Where(s => s.Kind == SourceKind.Worktree).Select(s => new SourceNode(PathSafety.DisplayName(s.OriginalPath), s.OriginalPath, "\uE73E", [])).ToList();
-            if (worktrees.Count > 0) SourceTree.Add(new("Worktrees", $"{worktrees.Count} included", "\uE8B7", worktrees));
-            UpdatePreviewProperties();
+            foreach (var node in nodes) SourceTree.Add(node);
+            UpdatePreviewProperties(); PreviewLoad.Complete(request);
         }
-        catch (OperationCanceledException) { }
-        catch (Exception e) { if (!cancellation.IsCancellationRequested) StatusMessage = "Preview failed: " + e.Message; }
-        finally { if (previewCancellation == cancellation) previewCancellation = null; cancellation.Dispose(); }
+        catch (OperationCanceledException) { PreviewLoad.Cancel(request); }
+        catch (Exception e) { PreviewLoad.Fail(request, e); }
     }
     public Task RefreshPreviewAsync() => UpdatePreviewAsync();
     private void UpdatePreviewProperties()

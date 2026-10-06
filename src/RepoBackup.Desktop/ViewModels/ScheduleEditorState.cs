@@ -5,14 +5,21 @@ namespace RepoBackup.Desktop.ViewModels;
 
 public sealed class ScheduleEditorState : ObservableObject
 {
+    private bool preservingDraft;
+    public void PreserveDraft(Action refresh)
+    {
+        preservingDraft = true;
+        try { refresh(); } finally { preservingDraft = false; }
+        Raise(nameof(DestinationId)); Raise(nameof(SelectionId));
+    }
     public string? Id { get; private set; }
     public string Mode => Id is null ? "New schedule" : "Edit schedule";
     private string name = "Project backups";
     public string Name { get => name; set => Set(ref name, value); }
     private string? destinationId;
-    public string? DestinationId { get => destinationId; set => Set(ref destinationId, value); }
+    public string? DestinationId { get => destinationId; set { if (!preservingDraft) Set(ref destinationId, value); } }
     private string? selectionId;
-    public string? SelectionId { get => selectionId; set => Set(ref selectionId, value); }
+    public string? SelectionId { get => selectionId; set { if (!preservingDraft) Set(ref selectionId, value); } }
     private bool enabled;
     public bool Enabled { get => enabled; set => Set(ref enabled, value); }
     private ScheduleKind kind;

@@ -13,7 +13,7 @@ public partial class MainWindow : Window
     private void CloseClick(object sender, RoutedEventArgs e) => Close();
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
-        if (!ViewModel.IsBusy) return;
+        if (!ViewModel.IsBusy) { ViewModel.StopBackgroundReads(); return; }
         e.Cancel = true;
         if (MessageBox.Show(this, "An operation is running. Cancel it before closing?", "Repo Backup", MessageBoxButton.YesNo) == MessageBoxResult.Yes) ViewModel.Cancel();
     }

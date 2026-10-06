@@ -44,6 +44,7 @@ public partial class App : System.Windows.Application
             var window = new MainWindow(model); MainWindow = window;
             if (Argument("--render-preview") is { } output)
             {
+                await model.InitializeAsync(discover: false, showSetup: false);
                 // Render the real WPF visual tree for layout QA without displaying a desktop window.
                 window.ShowInTaskbar = false; window.Width = 1500; window.Height = 960;
                 if (Argument("--preview-project") is { } name) model.SelectedProject = model.Projects.FirstOrDefault(p => p.Name == name);
@@ -54,8 +55,8 @@ public partial class App : System.Windows.Application
                 if (model.IsSnapshots)
                 {
                     var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
-                    while (model.IsBusy && DateTimeOffset.UtcNow < deadline) await Task.Delay(25);
-                    if (model.IsBusy) throw new TimeoutException("Snapshot preview did not finish.");
+                    while (model.SnapshotsLoad.IsLoading && DateTimeOffset.UtcNow < deadline) await Task.Delay(25);
+                    if (model.SnapshotsLoad.IsLoading) throw new TimeoutException("Snapshot preview did not finish.");
                     await model.RefreshSnapshotFilesAsync();
                 }
                 var surface = (System.Windows.Controls.Panel)window.Content;

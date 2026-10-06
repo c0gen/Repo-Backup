@@ -22,7 +22,7 @@ public sealed class ProjectItem : ObservableObject
         || Paths.Contains(query, StringComparison.OrdinalIgnoreCase) || Programs.Contains(query, StringComparison.OrdinalIgnoreCase);
     public bool IsBroad => project.Roots.Any(r => PathSafety.IsBroad(r.Path));
     public string DiscoveryDetail => $"{Programs} · {project.Roots.Count} source root{(project.Roots.Count == 1 ? "" : "s")}" + (IsBroad ? " · Broad location — review contents carefully" : "");
-    public bool Available => project.Roots.All(r => Directory.Exists(r.Path));
+    public bool Available { get; }
     public DateTimeOffset? LastBackup { get; private set; }
     public bool NeedsBackup { get; private set; }
     public string LastBackupText => LastBackup is { } at ? at.LocalDateTime.ToString("MMM d, h:mm tt") : "—";
@@ -34,9 +34,9 @@ public sealed class ProjectItem : ObservableObject
         get => project.Enabled;
         set { if (project.Enabled == value) return; var changed = project with { Enabled = value }; save(changed); project = changed; Raise(); }
     }
-    public ProjectItem(ProjectEntry project, IEnumerable<JobRecord> history, Action<ProjectEntry> save)
+    public ProjectItem(ProjectEntry project, IEnumerable<JobRecord> history, Action<ProjectEntry> save, bool? available = null)
     {
-        this.project = project; this.save = save;
+        this.project = project; this.save = save; Available = available ?? project.Roots.All(r => Directory.Exists(r.Path));
         UpdateProtection(history, null);
     }
     public void UpdateProtection(IEnumerable<JobRecord> history, string? destinationId)

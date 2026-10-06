@@ -8,3 +8,5 @@ public partial class SnapshotsPage : UserControl { public SnapshotsPage() => Ini
 public partial class DestinationsPage : UserControl { public DestinationsPage() => InitializeComponent(); }
 public partial class ActivityPage : UserControl { public ActivityPage() => InitializeComponent(); }
 public partial class SettingsPage : UserControl { public SettingsPage() => InitializeComponent(); }
+
+public partial class DiscoveryReview : UserControl { public DiscoveryReview() => InitializeComponent(); }

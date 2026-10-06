@@ -9,7 +9,7 @@ public class DialogService
     public Window? Owner => Application.Current.MainWindow;
     public virtual void Error(Exception error) => MessageBox.Show(Owner!, error.Message, "Repo Backup", MessageBoxButton.OK, MessageBoxImage.Warning);
     public virtual void Information(string message) => MessageBox.Show(Owner!, message, "Repo Backup", MessageBoxButton.OK, MessageBoxImage.Information);
-    public string? Folder(string title)
+    public virtual string? Folder(string title)
     {
         var dialog = new OpenFolderDialog { Title = title }; return dialog.ShowDialog(Owner) == true ? dialog.FolderName : null;
     }

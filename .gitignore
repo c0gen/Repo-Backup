@@ -1,0 +1,61 @@
+# Repository-local SDK, dependency downloads, test fixtures, and release packages
+/.tools/
+/.artifacts/
+/dist/
+
+# .NET build and test output (keep packages.lock.json in source control)
+[Bb]in/
+[Oo]bj/
+[Tt]est[Rr]esults/
+*.trx
+*.coverage
+*.coveragexml
+
+# Downloaded restic executable and checksum sidecars; retain its license
+/vendor/restic/*.exe
+/vendor/restic/*.sha256
+
+# IDE settings and per-user state
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Local application data and exported credentials
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+credentials/
+*.key
+*.pem
+*.pfx
+*.p12
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Temporary files and operating-system metadata
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
+    <Content Include="$(MSBuildThisFileDirectory)vendor/restic/restic.exe" Link="restic/restic.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(MSBuildThisFileDirectory)vendor/restic/LICENSE" Link="restic/LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>WinExe</OutputType><UseWPF>true</UseWPF><ApplicationManifest>app.manifest</ApplicationManifest><AssemblyName>RepoBackup</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../RepoBackup.Core/RepoBackup.Core.csproj" /></ItemGroup>
+</Project>

@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>WinExe</OutputType></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../RepoBackup.Cli/RepoBackup.Cli.csproj" /></ItemGroup>
+</Project>

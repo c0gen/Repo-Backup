@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RepoBackup.Core/RepoBackup.Core.csproj" />
+    <Project Path="src/RepoBackup.Cli/RepoBackup.Cli.csproj" />
+    <Project Path="src/RepoBackup.Runner/RepoBackup.Runner.csproj" />
+    <Project Path="src/RepoBackup.Desktop/RepoBackup.Desktop.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RepoBackup.Tests/RepoBackup.Tests.csproj" />
+  </Folder>
+</Solution>

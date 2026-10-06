@@ -33,7 +33,10 @@ try {
         $taskSnapshots = Invoke-SmokeProcess -Executable $taskCurrent -Arguments ($taskArguments + @('snapshots')) | ConvertFrom-Json
         if (@($taskSnapshots).Count -ne 1) { throw 'Could not read the legacy snapshot.' }
         $null = Invoke-SmokeProcess -Executable $taskCurrent -Arguments ($taskArguments + @('check', '--read-data'))
-        $null = Invoke-SmokeProcess -Executable $taskCurrent -Arguments ($taskArguments + @('restore', 'latest', '--target', $taskRestore))
+        # Match the application's source-scoped restores. Restoring from the tree
+        # root also tries to recreate Windows system ancestor attributes/ACLs.
+        $taskSnapshotPath = '/' + $taskModeRoot.Replace(':', '').Replace('\', '/')
+        $null = Invoke-SmokeProcess -Executable $taskCurrent -Arguments ($taskArguments + @('restore', ($taskSnapshots[0].id + ':' + $taskSnapshotPath), '--target', $taskRestore, '--verify'))
         $taskRestored = @(Get-ChildItem -LiteralPath $taskRestore -Recurse -File -Filter 'fixture.txt')
         if ($taskRestored.Count -ne 1 -or (Get-FileHash -LiteralPath $taskRestored[0].FullName -Algorithm SHA256).Hash -ne $taskBefore) { throw "Legacy $taskMode restore hash mismatch." }
         Write-Host "PASS restic 0.18.0 $taskMode repository reads, verifies, and restores with restic 0.19.1."

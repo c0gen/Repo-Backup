@@ -1,5 +1,7 @@
 param([switch]$Package, [switch]$Installer, [string]$Version)
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell's per-buffer download progress is expensive on clean CI.
+$ProgressPreference = 'SilentlyContinue'
 $taskRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $taskReports = Join-Path $taskRoot ('.artifacts\verification\' + [Guid]::NewGuid().ToString('N'))
 Import-Module (Join-Path $PSScriptRoot 'verification\NuGetAudit.psm1') -Force

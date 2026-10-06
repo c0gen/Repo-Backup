@@ -53,19 +53,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Package.ps1 -
 
 The test extracts the actual ZIP, verifies its manifest, and removes system Git/.NET locations from the child-process environment. It creates an isolated Git repository, linked worktree, and local LFS object store; preserves unfinished, untracked, and hydrated LFS files through a real encrypted backup and restore; runs the hidden runner; and renders the WPF desktop. Fixtures and backup data stay under `.artifacts/package-smoke`.
 
-On a clean Windows runner, include `-Installer` to test the running-app guard, setup, the Start menu shortcut and uninstall registration, the installed application, reinstall preserving the catalog, and uninstall preserving the catalog and backup repository. This temporarily registers the app for the current user and cleans it up afterward. The test refuses to overwrite an existing installation or Start menu shortcut. The GitHub release workflow runs both smoke tests.
+On a clean Windows runner, include `-Installer` to test the running-app guard, setup, the Start menu shortcut and uninstall registration, the installed application, reinstall preserving the catalog, and uninstall preserving the catalog and backup repository. This temporarily registers the app for the current user and cleans it up afterward. The test refuses to overwrite an existing installation or Start menu shortcut. Read-only GitHub CI runs both smoke tests through `Verify.ps1 -Installer`.
 
-## GitHub Releases
+## Manual GitHub Releases
 
-`.github/workflows/release.yml` runs when a GitHub Release is published. Use a tag such as `v1.0.0` or `v1.1.0-rc.1`; the tag supplies the package version. The workflow builds and runs the acceptance suite on Windows, compiles setup, performs the portable and installer smoke tests, and uploads these three assets to that same Release:
+Start from a clean checkout of a reviewed commit on a clean Windows machine. Review the commit ID, upstream native-tool updates, and the dependency/security reports before building. `git status --porcelain` must be empty and the checkout must include complete history. Select the next release version; do not replace existing published release assets to distribute a code change.
+
+```powershell
+git status --porcelain
+git rev-parse HEAD
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify.ps1 -Installer -Version 1.0.1
+if ($LASTEXITCODE -ne 0) { throw 'Release validation failed.' }
+Get-Content .\dist\SHA256SUMS
+Get-FileHash .\dist\RepoBackup-1.0.1-win-x64-setup.exe, .\dist\RepoBackup-1.0.1-win-x64.zip -Algorithm SHA256
+```
+
+The example version is only an example; use the version selected for the reviewed release. The entrypoint scans, audits, runs acceptance and compatibility tests, builds the installer and ZIP, generates checksums, and smoke-tests both packages. Confirm the Git checkout is still clean afterward and the hashes match `SHA256SUMS`. Keep the commit ID and local validation reports with your release records.
+
+On GitHub's Releases page, create a draft with a new tag such as `v1.0.1` targeting that exact reviewed commit. Upload these three locally validated assets manually, review the release notes and unsigned-installer disclosure, then publish:
 
 - `RepoBackup-<version>-win-x64-setup.exe`
 - `RepoBackup-<version>-win-x64.zip`
 - `SHA256SUMS`
 
-The workflow also supports **Actions > Release packages > Run workflow** with an explicit version. A manual run produces downloadable workflow artifacts and does not create or publish a Release. On a release run, uploads use the repository's built-in `GITHUB_TOKEN` with `contents: write`; no personal access token is needed. A rerun replaces assets with the same names.
+The existing published release is retained. No release event triggers a publishing workflow. CI builds temporary packages only to test them and does not upload artifacts or publish assets; CI outputs never become releases automatically.
 
-Build the workflow on the branch or commit that contains these packaging changes before publishing its Release. The workflow itself does not push commits or create tags.
+`.github/workflows/verify.yml` checks pull requests, pushes to `main`, and **Actions > Verify > Run workflow** on standard temporary Windows runners. Its token has only `contents: read` and checkout does not persist credentials. Runs use no repository secrets, stored artifacts, self-hosted runners, or paid runner types. See [Security maintenance](SECURITY.md) for dependencies and CI policy. Code signing remains deferred.
 
 To verify a downloaded asset in PowerShell:
 

@@ -5,14 +5,14 @@ The application is built on Windows with the pinned .NET SDK and restic release.
 ## Reproduce
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\Build.ps1 -Test -WindowsIntegration -Publish
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify.ps1 -Package
 ```
 
 Use `--unit` on the test executable for catalog, discovery, CLI and native hook checks. Use `--edge-only` for those checks plus link, low-space, live-change and external Git-data tests. Build the whole solution first so the CLI and hidden runner fixtures are available. Junction creation requires an environment permitting Windows reparse points.
 
 Use `--destinations-only` for desktop workflow, protection/export, and core/CLI destination checks without repeating the full backup and retention suites. Combine it with `--windows-integration` to include temporary schedule creation, repeated editing, and missing-task removal. Use `--reliability-only` for exact restore, cancellation/finalization, moved-root recovery, and reactivation regressions.
 
-Build release installers with `scripts/Build.ps1 -Test -Installer`. Run `scripts/Test-Package.ps1` to verify the actual ZIP and packaged backup/restore, hidden runner, and desktop with system Git/.NET discovery disabled. Include `-Installer` on a clean Windows runner to check setup, reinstall, uninstall, and preserved user data. See [Packaging and releases](PACKAGING.md) for commands and CI behavior.
+`Verify.ps1` includes redacted secret scanning, live transitive NuGet auditing, negative security-gate fixtures, the full acceptance suite, and restic 0.18.0 repository compatibility checks. `-Package` builds and tests the portable ZIP; use `-Installer` on a clean Windows machine to also build and test setup, reinstall, uninstall, and preserved user data. Direct `Build.ps1` and `Test-Package.ps1` commands remain available for focused checks. See [Security maintenance](SECURITY.md) and [Packaging and releases](PACKAGING.md).
 
 ## Acceptance coverage
 

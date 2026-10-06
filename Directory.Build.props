@@ -8,6 +8,11 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode>true</RestoreLockedMode>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
     <RestorePackagesPath>$(MSBuildThisFileDirectory).tools/packages</RestorePackagesPath>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>

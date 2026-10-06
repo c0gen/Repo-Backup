@@ -45,7 +45,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Build.ps1 -Publish
 .\dist\RepoBackup\RepoBackup.exe
 ```
 
-The build script bootstraps the pinned .NET SDK **10.0.401** into `.tools`, downloads and verifies restic **0.18.0**, restores the dependencies, and builds the solution. The SDK archive is checked with SHA-512; the restic archive and executable are checked with SHA-256. NuGet versions are recorded in committed `packages.lock.json` files.
+The build script bootstraps the pinned .NET SDK **10.0.401** into `.tools`, downloads and verifies restic **0.19.1**, restores the dependencies, and builds the solution. The SDK archive is checked with SHA-512; the restic archive and executable are checked with SHA-256. Builds and publishing enforce committed `packages.lock.json` files. Existing restic 0.18.0 repositories remain supported in both protection modes.
 
 Publishing produces:
 
@@ -61,7 +61,7 @@ To also build the graphical installer, use `-Installer` (which includes publishi
 powershell -ExecutionPolicy Bypass -File .\scripts\Build.ps1 -Test -Installer -Version 1.0.0
 ```
 
-This adds `dist/RepoBackup-1.0.0-win-x64-setup.exe`. The pinned Inno Setup compiler is bootstrapped in portable mode under `.tools`; it does not need to be installed globally. Publishing a GitHub Release with a tag such as `v1.0.0` triggers the release workflow, which builds, tests, and attaches the installer, ZIP, and checksums.
+This adds `dist/RepoBackup-1.0.0-win-x64-setup.exe`. The pinned Inno Setup compiler is bootstrapped in portable mode under `.tools`; it does not need to be installed globally. Releases are built, reviewed, and uploaded manually as described in [Packaging and releases](docs/PACKAGING.md). Read-only CI validates disposable packages and never publishes a release or stores build artifacts.
 
 For a build without packaging, omit `-Publish`. Build outputs, downloaded tools, test artifacts, and published packages are ignored by Git.
 
@@ -132,17 +132,19 @@ The CLI also supports previews, saved selections, catalog import/export, schedul
 
 ## Development and testing
 
-Build and run the acceptance suite:
+Run secret scanning, a live NuGet vulnerability audit (including transitive dependencies), and the full Windows acceptance suite:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\Build.ps1 -Test
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify.ps1
 ```
 
-To also test the hidden runner through an isolated Windows scheduled task and produce a distributable package:
+To also build and smoke-test the portable package:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\Build.ps1 -Test -WindowsIntegration -Publish
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify.ps1 -Package
 ```
+
+Use `Verify.ps1 -Installer` on a clean Windows machine for both portable and installer smoke tests. The installer test refuses to overwrite an existing installation or Start menu shortcut. `Build.ps1 -Test` remains available for a faster build/acceptance-only run. Validation requires internet access and fails if vulnerability data cannot be retrieved or any known vulnerability is reported. See [Security maintenance](docs/SECURITY.md) for intentional lock-file updates and native-tool checks.
 
 The executable test suite uses real restic repositories and generated Git fixtures under `.artifacts`. It covers discovery, catalog migration, native hook callbacks, working-file hashes, Git worktrees and submodules, selective restores, retention, cancellation, destination locks, and recovery with a fresh catalog. Tests do not back up user projects.
 
@@ -181,6 +183,7 @@ Discovery depends on each program's local storage format. Invalid sources genera
 - [Project discovery and optional hooks](docs/DISCOVERY.md)
 - [Validation coverage and operating limits](docs/VALIDATION.md)
 - [Installer packaging and GitHub Releases](docs/PACKAGING.md)
+- [Security validation and dependency maintenance](docs/SECURITY.md)
 
 ## Third-party software
 

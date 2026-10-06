@@ -8,8 +8,8 @@ namespace RepoBackup.Core.Backup;
 
 public sealed class ResticClient
 {
-    public const string Version = "0.18.0";
-    public const string ExecutableSha256 = "AC345161C31BFC5554A693ABB1999FADD81C9829CE881DC3868BF5B02405AB0D";
+    public const string Version = "0.19.1";
+    public const string ExecutableSha256 = "B0DD1FD21EEA5D8FE1325F55F7118213C21F36DE8A261E04C0624A5AB9FD7830";
     private readonly AppPaths paths;
     private readonly CredentialStore credentials;
     private readonly ProcessRunner processes;

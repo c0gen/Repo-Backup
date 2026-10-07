@@ -46,7 +46,11 @@ public static class BackupTests
         await tests.Run("Snapshot contains recoverable source mappings independently of the catalog", async () => { var manifest = await app.Restic.ManifestAsync(fixture.Destination, fixture.Snapshot); Assert(manifest.Sources.Count == 3 && manifest.Project.Id == fixture.Project.Id, "Recovery metadata missing."); var files = await app.Restic.FilesAsync(fixture.Destination, fixture.Snapshot.Id); Assert(files.Any(f => f.Path == PathSafety.SnapshotPath(Path.Combine(fixture.Main, ".env"))), "Snapshot path mapping incorrect."); });
         await tests.Run("Full restore preserves commits, branches, dirty index and multiple worktrees", async () =>
         {
-            var target = Path.Combine(fixture.Root, "restored-full"); await app.Restore.RestoreAsync(fixture.Destination, fixture.Snapshot, target);
+            var progress = new ProgressRecorder();
+            var target = Path.Combine(fixture.Root, "restored-full"); await app.Restore.RestoreAsync(fixture.Destination, fixture.Snapshot, target, progress: progress);
+            progress.AssertSuccessfulRestore();
+            Assert(progress.Items.Count(p => p.Stage.StartsWith("Restoring ") && p.CurrentFile is null) >= 3
+                && progress.Items.Any(p => p.CurrentFile is not null) && progress.Items.Any(p => p.Stage.StartsWith("Verifying ") && p.IsIndeterminate), "Real restore did not stream source and file activity.");
             var manifest = await app.Restic.ManifestAsync(fixture.Destination, fixture.Snapshot); var main = Path.Combine(target, "sources", manifest.Sources.Single(s => s.OriginalPath == fixture.Main).RestoreFolder);
             Assert(await fixture.GitOutput(main, "rev-parse", "HEAD") == await fixture.GitOutput(fixture.Main, "rev-parse", "HEAD"), "Commits changed.");
             Assert(await fixture.GitOutput(main, "branch", "--format=%(refname)") == await fixture.GitOutput(fixture.Main, "branch", "--format=%(refname)"), "Branches changed.");
@@ -62,8 +66,15 @@ public static class BackupTests
             foreach (var relative in new[] { "README.md", "staged.txt", "untracked.txt", ".env", "build\\keep.txt", "dist\\keep.txt", "node_modules\\tracked.txt", "module\\module.txt" }) Assert(await Fixture.HashAsync(Path.Combine(main, relative)) == await Fixture.HashAsync(Path.Combine(fixture.Main, relative)), "Hash mismatch: " + relative);
             Assert(!File.Exists(Path.Combine(main, "node_modules", "cache.txt")), "Excluded cache restored."); Assert((await fixture.GitOutput(Path.Combine(main, "module"), "rev-parse", "--show-toplevel")).Trim().Equals(Path.Combine(main, "module").Replace('\\', '/'), StringComparison.OrdinalIgnoreCase), "Submodule still points outside recovery.");
         });
+        await RestoreServiceProgressTests.RunAsync(tests, fixture);
         await tests.Run("Recovery writes do not modify any file in the original repository", async () => { var after = await Fixture.HashesAsync(fixture.Main); Assert(fixture.OriginalHashes.Count == after.Count && fixture.OriginalHashes.All(kv => after.GetValueOrDefault(kv.Key) == kv.Value), "Original repository was modified."); });
-        await tests.Run("Individual file restores match hashes in a new directory", async () => { var target = Path.Combine(fixture.Root, "restored-file"); var path = PathSafety.SnapshotPath(Path.Combine(fixture.Main, ".env")); await app.Restore.RestoreAsync(fixture.Destination, fixture.Snapshot, target, path); var restored = Directory.EnumerateFiles(target, ".env", SearchOption.AllDirectories).Single(); Assert(await Fixture.HashAsync(restored) == await Fixture.HashAsync(Path.Combine(fixture.Main, ".env")), "Selective hash mismatch."); Assert(!Directory.EnumerateFiles(target, "README.md", SearchOption.AllDirectories).Any(), "Selective restore included unrelated files."); });
+        await tests.Run("Individual file restores match hashes in a new directory", async () =>
+        {
+            var progress = new ProgressRecorder(); var target = Path.Combine(fixture.Root, "restored-file"); var path = PathSafety.SnapshotPath(Path.Combine(fixture.Main, ".env"));
+            await app.Restore.RestoreAsync(fixture.Destination, fixture.Snapshot, target, path, progress); progress.AssertSuccessfulRestore();
+            Assert(progress.Items.Any(p => p.CurrentFile?.EndsWith("\\.env") == true), "Selected file did not report activity.");
+            var restored = Directory.EnumerateFiles(target, ".env", SearchOption.AllDirectories).Single(); Assert(await Fixture.HashAsync(restored) == await Fixture.HashAsync(Path.Combine(fixture.Main, ".env")), "Selective hash mismatch."); Assert(!Directory.EnumerateFiles(target, "README.md", SearchOption.AllDirectories).Any(), "Selective restore included unrelated files.");
+        });
         await tests.Run("Restoring into an original or existing directory is rejected", async () => { await Throws<InvalidOperationException>(() => app.Restore.RestoreAsync(fixture.Destination, fixture.Snapshot, Path.Combine(fixture.Main, "restored"))); await Throws<IOException>(() => app.Restore.RestoreAsync(fixture.Destination, fixture.Snapshot, Path.Combine(fixture.Root, "restored-file"))); });
         await tests.Run("Eleven successful full backups retain exactly ten full recovery points", async () =>
         {
@@ -72,7 +83,13 @@ public static class BackupTests
         });
         var selection = new SavedSelection { ProjectId = fixture.Project.Id, Name = "Design Assets", Paths = [Path.Combine(fixture.Main, "assets")] };
         await tests.Run("Partial selections have separate snapshots and cannot displace full versions", async () => { app.Catalog.SaveSelection(selection); var result = (await app.Backups.RunAsync(fixture.Destination, [fixture.Project], selection)).Single(); Assert(result.Coverage == Coverage.PartialSelection && result.Backup == Outcome.Successful, Json.Write(result)); var snapshots = await app.Restic.SnapshotsAsync(fixture.Destination); Assert(snapshots.Count(s => s.Successful && s.Coverage == Coverage.FullProject) == 10 && snapshots.Count(s => s.Coverage == Coverage.PartialSelection) == 1, "Partial selection removed full snapshots."); });
-        await tests.Run("Folder selection restores only the selected source with matching hashes", async () => { var snapshot = (await app.Restic.SnapshotsAsync(fixture.Destination)).Single(s => s.Coverage == Coverage.PartialSelection); var target = Path.Combine(fixture.Root, "restored-partial"); await app.Restore.RestoreAsync(fixture.Destination, snapshot, target); var file = Directory.EnumerateFiles(target, "texture.txt", SearchOption.AllDirectories).Single(); Assert(await Fixture.HashAsync(file) == await Fixture.HashAsync(Path.Combine(fixture.Main, "assets", "texture.txt")), "Partial selection hash mismatch."); });
+        await tests.Run("Folder selection restores only the selected source with matching hashes", async () =>
+        {
+            var snapshot = (await app.Restic.SnapshotsAsync(fixture.Destination)).Single(s => s.Coverage == Coverage.PartialSelection); var target = Path.Combine(fixture.Root, "restored-partial");
+            var progress = new ProgressRecorder(); await app.Restore.RestoreAsync(fixture.Destination, snapshot, target, progress: progress); progress.AssertSuccessfulRestore();
+            Assert(progress.Items.Any(p => p.CurrentFile?.EndsWith("\\texture.txt") == true), "Selected folder did not report activity.");
+            var file = Directory.EnumerateFiles(target, "texture.txt", SearchOption.AllDirectories).Single(); Assert(await Fixture.HashAsync(file) == await Fixture.HashAsync(Path.Combine(fixture.Main, "assets", "texture.txt")), "Partial selection hash mismatch.");
+        });
         await tests.Run("An individual-file saved selection supports both whole-series and file restore", async () =>
         {
             var selected = new SavedSelection { ProjectId = fixture.Project.Id, Name = "Configuration file", Paths = [Path.Combine(fixture.Main, ".env")] };

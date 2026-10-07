@@ -13,6 +13,8 @@ Catalogs migrate transactionally to version 2 on opening. Version 2 exports reta
 3. Choose **Restore entire recovery point**, **Restore selected file / folder**, or **Test restore**. Select a parent folder. The app creates a new child directory and verifies restored file data.
 4. Open the recovered project under `sources`. Each source root and worktree has its own numbered folder. `recovery-manifest.json` records the original and restored mappings.
 
+All three restore actions show progress across the requested sources, the restored size, and the latest restored filename. Hover over a shortened filename to see its full path. Preparation, verification, and finalization show animated progress; 100% appears only after the restore finishes successfully. Cancel remains available while the restore is running.
+
 Incomplete snapshots can contain useful files. Their status remains visible and they do not count as successful protection. A failed restore leaves `RESTORE-INCOMPLETE.txt` in its new directory; retry into another new directory.
 
 ## On a replacement computer

@@ -22,7 +22,7 @@ public sealed class ResticClient
         await using var stream = File.OpenRead(Executable); var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, token));
         if (hash != ExecutableSha256) throw new InvalidDataException("Restic executable checksum does not match the pinned release. Reinstall Repo Backup.");
     }
-    public async Task<ProcessResult> RunAsync(Destination destination, IEnumerable<string> args, CancellationToken token = default, Action<string>? output = null)
+    public async Task<ProcessResult> RunAsync(Destination destination, IEnumerable<string> args, CancellationToken token = default, Action<string>? output = null, bool captureOutput = true)
     {
         await VerifyExecutableAsync(token);
         var password = destination.Protection switch
@@ -34,7 +34,7 @@ public sealed class ResticClient
         var environment = new Dictionary<string, string> { ["RESTIC_PASSWORD"] = password, ["RESTIC_CACHE_DIR"] = paths.CacheDirectory, ["RESTIC_PASSWORD_FILE"] = "", ["RESTIC_PASSWORD_COMMAND"] = "", ["RESTIC_KEY_HINT"] = "", ["RESTIC_REPOSITORY_FILE"] = "" };
         var arguments = new List<string> { "--repo", destination.Path, "--json" };
         if (destination.Protection == DestinationProtection.PasswordFree) arguments.Add("--insecure-no-password");
-        return await processes.RunAsync(Executable, arguments.Concat(args), token, environment: environment, onOutput: output, secret: password);
+        return await processes.RunAsync(Executable, arguments.Concat(args), token, environment: environment, onOutput: output, secret: password, captureOutput: captureOutput);
     }
     public async Task<string> RepositoryIdentityAsync(Destination destination, CancellationToken token = default)
     {

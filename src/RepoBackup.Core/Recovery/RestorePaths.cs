@@ -8,10 +8,11 @@ public sealed record RestorePathPlan(SourceMapping Source, string Tree, string? 
     public string TargetPath(string target, SnapshotFile node) => Path.Combine(target, "sources", Source.RestoreFolder,
         node.Path[Tree.Length..].TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
 
-    public void Verify(string target)
+    public void Verify(string target, CancellationToken token = default)
     {
         foreach (var node in Expected)
         {
+            token.ThrowIfCancellationRequested();
             var path = TargetPath(target, node);
             if (node.Type == "dir" ? !Directory.Exists(path) : !File.Exists(path) && !Directory.Exists(path))
                 throw new IOException("Requested snapshot contents were not restored: " + node.Path);

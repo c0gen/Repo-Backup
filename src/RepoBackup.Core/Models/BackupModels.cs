@@ -30,5 +30,6 @@ public sealed record SnapshotInfo(string Id, DateTimeOffset Time, string[] Tags,
 }
 
 public sealed record SnapshotFile(string Path, string Type, long Size);
-public sealed record BackupProgress(string ProjectName, string Stage, double Fraction = 0, long Files = 0, long Bytes = 0, string? CurrentFile = null);
+public sealed record BackupProgress(string ProjectName, string Stage, double Fraction = 0, long Files = 0, long Bytes = 0, string? CurrentFile = null,
+    bool IsIndeterminate = false, long? TotalBytes = null);
 public sealed record VerificationRecord(string DestinationId, DateTimeOffset At, Outcome Outcome, string Message);

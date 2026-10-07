@@ -74,12 +74,14 @@ internal static class DesktopTestSupport
     internal sealed class TestDialogs : DialogService
     {
         public List<Exception> Errors { get; } = [];
+        public List<string> InformationMessages { get; } = [];
+        public Action<string>? OnInformation { get; set; }
         public string? FolderPath { get; set; }
         public string? SavePath { get; set; }
         public int SaveCalls { get; private set; }
         public override string? Folder(string title) => FolderPath;
         public override string? Save(string title, string filename, string filter) { SaveCalls++; return SavePath; }
         public override void Error(Exception error) => Errors.Add(error);
-        public override void Information(string message) { }
+        public override void Information(string message) { InformationMessages.Add(message); OnInformation?.Invoke(message); }
     }
 }

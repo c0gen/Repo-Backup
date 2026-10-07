@@ -82,6 +82,7 @@ public static class DesktopDestinationTests
             await DesktopSetupTests.RunAsync(tests, Path.Combine(root, "setup"));
             await DesktopLoadingTests.RunAsync(tests, Path.Combine(root, "loading"));
             await DesktopWorkflowRegressionTests.RunAsync(tests, Path.Combine(root, "workflow"));
+            await DesktopRestoreProgressTests.RunAsync(tests, Path.Combine(root, "restore-progress"));
             await tests.Run("Desktop protection switching clears unused key inputs and rendering has no binding errors", () =>
             {
                 var form = Form(Path.Combine(root, "switch-mode"), () => true); SelectProtection(form, DestinationProtection.RecoveryKey);

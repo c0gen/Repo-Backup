@@ -10,6 +10,7 @@ if (args.FirstOrDefault() == "--public-screenshot-fixture")
 
 var root = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, ".artifacts", "tests", DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6]));
 var runner = new TestRunner();
+await RestoreProgressTests.RunAsync(runner);
 DesktopWorkflowRegressionTests.IncludeScheduling = args.Contains("--windows-integration");
 if (args.Contains("--reliability-only"))
 {

@@ -39,7 +39,6 @@ public sealed partial class MainViewModel
     public string FilesEmptyText => SnapshotFiles.Count == 0 ? "No files were found in this recovery point." : "No files match your search.";
     public bool NeedsSnapshotSelection => !SnapshotsLoad.IsLoading && SelectedSnapshot is null && Snapshots.Count > 0;
     public bool NeedsPreviewSelection => CatalogLoad.IsReady && SelectedProject is null;
-    public bool IsProgressIndeterminate { get; private set; } = true;
     private List<VerificationRecord> verifications = [];
     private bool settingsLoaded, applyingCatalog;
     private string destinationState = "Choose a destination", destinationFreeSpace = "";

@@ -14,7 +14,7 @@ public sealed record ProcessResult(int ExitCode, string Output, string Error)
 public class ProcessRunner
 {
     public virtual async Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default,
-        string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null)
+        string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -35,7 +35,7 @@ public class ProcessRunner
             while (await reader.ReadLineAsync() is { } line)
             {
                 line = Redact(line);
-                target.AppendLine(line);
+                if (!report || captureOutput) target.AppendLine(line);
                 if (report) onOutput?.Invoke(line);
             }
         }

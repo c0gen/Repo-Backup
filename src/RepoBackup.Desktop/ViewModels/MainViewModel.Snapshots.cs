@@ -6,6 +6,7 @@ public sealed partial class MainViewModel
 {
     public Func<Destination, CancellationToken, Task<List<SnapshotInfo>>>? SnapshotLoader { get; set; }
     public Func<Destination, SnapshotInfo, CancellationToken, Task<List<SnapshotFileItem>>>? SnapshotFileLoader { get; set; }
+    public Func<Destination, SnapshotInfo, string, string?, IProgress<BackupProgress>, CancellationToken, Task<string>>? RestoreExecutor { get; set; }
     private void InitializeSnapshotCommands()
     {
         RefreshSnapshotsCommand = Command(RefreshSnapshotsAsync, () => SelectedDestination is not null);
@@ -76,8 +77,13 @@ public sealed partial class MainViewModel
         var target = Path.Combine(parent, (test ? "TestRestore-" : "Restored-") + snapshot.Id[..8] + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..4]);
         await OperateAsync(async token =>
         {
-            ProgressStage = "Restoring and verifying file data";
-            var restored = await Services.Restore.RestoreAsync(destination, snapshot, target, file, Progress(), token);
+            ProgressStage = "Preparing restore";
+            using var reporter = RestoreReporter();
+            var executor = RestoreExecutor;
+            var restored = await Task.Run(() => executor is null
+                ? Services.Restore.RestoreAsync(destination, snapshot, target, file, reporter, token)
+                : executor(destination, snapshot, target, file, reporter, token), token);
+            reporter.Complete();
             StatusMessage = (test ? "Test restore passed: " : "Restore completed: ") + restored;
             dialogs.Information(StatusMessage);
         });

@@ -9,6 +9,7 @@ public sealed class RestoreService(AppPaths paths, CatalogStore catalog, ResticC
 {
     public async Task<string> RestoreAsync(Destination destination, SnapshotInfo snapshot, string target, string? selectedSnapshotPath = null, IProgress<BackupProgress>? progress = null, CancellationToken token = default)
     {
+        progress?.Report(new("", "Preparing restore", IsIndeterminate: true));
         using var lease = DestinationLease.Acquire(paths, destination.Path);
         await restic.PrepareRepositoryAsync(destination, token);
         var manifest = await restic.ManifestAsync(destination, snapshot, token);
@@ -18,26 +19,39 @@ public sealed class RestoreService(AppPaths paths, CatalogStore catalog, ResticC
         foreach (var source in manifest.Sources)
             if (source.RestoreFolder != PathSafety.SafeName(source.RestoreFolder) || source.SnapshotPath != PathSafety.SnapshotPath(source.OriginalPath)) throw new InvalidDataException("Unsafe source mapping in snapshot.");
         if (selectedSnapshotPath is not null && !manifest.Sources.Any(s => selectedSnapshotPath.Equals(s.SnapshotPath, StringComparison.OrdinalIgnoreCase) || selectedSnapshotPath.StartsWith(s.SnapshotPath.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase))) throw new ArgumentException("Choose a file or folder inside a recorded project source.");
+        progress?.Report(new(manifest.Project.Name, "Reading snapshot contents", IsIndeterminate: true));
         var nodes = await restic.FilesAsync(destination, snapshot.Id, token);
         var sources = selectedSnapshotPath is null ? manifest.Sources : manifest.Sources.OrderByDescending(s => s.SnapshotPath.Length)
             .Where(s => selectedSnapshotPath.Equals(s.SnapshotPath, StringComparison.Ordinal) || selectedSnapshotPath.StartsWith(s.SnapshotPath.TrimEnd('/') + "/", StringComparison.Ordinal)).Take(1).ToList();
         if (sources.Count == 0) throw new ArgumentException("Choose a path inside a recorded source.");
         var plans = sources.Select(s => RestorePaths.Plan(s, nodes, selectedSnapshotPath)).ToList();
+        var reporting = new RestoreProgress(manifest.Project.Name, plans, progress);
+        token.ThrowIfCancellationRequested();
         Directory.CreateDirectory(target);
         try
         {
             foreach (var plan in plans)
             {
-                progress?.Report(new(manifest.Project.Name, "Restoring " + plan.Source.RestoreFolder));
-                var args = new List<string> { "restore", snapshot.Id + ":" + plan.Tree, "--target", Path.Combine(target, "sources", plan.Source.RestoreFolder), "--verify", "--overwrite", "never" };
+                token.ThrowIfCancellationRequested();
+                reporting.Begin(plan);
+                var args = new List<string> { "restore", snapshot.Id + ":" + plan.Tree, "--target", Path.Combine(target, "sources", plan.Source.RestoreFolder), "--verify", "--overwrite", "never", "--verbose=2" };
                 if (plan.Include is not null) { args.Add("--include"); args.Add(plan.Include); }
-                (await restic.RunAsync(destination, args, token)).EnsureSuccess("Restore requested contents");
-                plan.Verify(target);
+                (await restic.RunAsync(destination, args, token, reporting.OnOutput, captureOutput: false)).EnsureSuccess("Restore requested contents");
+                reporting.Phase("Checking restored contents · " + plan.Source.RestoreFolder);
+                plan.Verify(target, token);
+                reporting.CompleteSource();
             }
-            if (selectedSnapshotPath is null && manifest.Coverage == Coverage.FullProject) await git.RepairAsync(target, manifest.Sources, token);
+            if (selectedSnapshotPath is null && manifest.Coverage == Coverage.FullProject)
+            {
+                reporting.Phase("Repairing restored Git relationships");
+                await git.RepairAsync(target, manifest.Sources, token);
+            }
+            reporting.Phase("Finalizing restore");
             await File.WriteAllTextAsync(Path.Combine(target, "recovery-manifest.json"), Json.Write(manifest), token);
             await File.WriteAllTextAsync(Path.Combine(target, "RESTORED.txt"), $"Restored snapshot {snapshot.Id} ({(snapshot.Successful ? "successful" : "incomplete or interrupted")}) on {DateTimeOffset.Now:O}.\nSources are in the sources folder. Original repositories were not modified.\n", token);
+            token.ThrowIfCancellationRequested();
             catalog.SaveSetting("lastRestore", new { destination.Id, snapshotId = snapshot.Id, target, at = DateTimeOffset.UtcNow, successful = true });
+            reporting.Complete();
             return target;
         }
         catch

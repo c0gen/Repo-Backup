@@ -154,18 +154,18 @@ public static class ReliabilityRegressionTests
     private sealed class ImmediateProgress(Action<BackupProgress> action) : IProgress<BackupProgress> { public void Report(BackupProgress value) => action(value); }
     private sealed class OverrideRunner(Func<List<string>, ProcessResult?> intercept) : ProcessRunner
     {
-        public override Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null)
+        public override Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
         {
             var args = arguments.ToList(); var result = intercept(args);
-            return result is null ? base.RunAsync(executable, args, token, workingDirectory, environment, onOutput, secret) : Task.FromResult(result);
+            return result is null ? base.RunAsync(executable, args, token, workingDirectory, environment, onOutput, secret, captureOutput) : Task.FromResult(result);
         }
     }
     private sealed class TagFailureRunner : ProcessRunner
     {
-        public override Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null)
+        public override Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
         {
             var args = arguments.ToList();
-            return args.Contains("tag") ? Task.FromResult(new ProcessResult(1, "", "Injected tag failure")) : base.RunAsync(executable, args, token, workingDirectory, environment, onOutput, secret);
+            return args.Contains("tag") ? Task.FromResult(new ProcessResult(1, "", "Injected tag failure")) : base.RunAsync(executable, args, token, workingDirectory, environment, onOutput, secret, captureOutput);
         }
     }
 }

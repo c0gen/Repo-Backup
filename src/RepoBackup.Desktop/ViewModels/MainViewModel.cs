@@ -15,7 +15,6 @@ public sealed partial class MainViewModel : ObservableObject
     public ApplicationServices Services { get; }
     private readonly DialogService dialogs;
     private readonly Func<string, long?> freeSpace;
-    private CancellationTokenSource? operation;
     public SetupWizardViewModel Setup { get; }
     public ObservableCollection<ProjectItem> Projects { get; } = [];
     public ObservableCollection<ProjectItem> DismissedProjects { get; } = [];
@@ -47,10 +46,6 @@ public sealed partial class MainViewModel : ObservableObject
     public bool IsIdle => !IsBusy;
     private string status = "Ready";
     public string StatusMessage { get => status; private set => Set(ref status, value); }
-    private string stage = "";
-    public string ProgressStage { get => stage; private set => Set(ref stage, value); }
-    private double fraction;
-    public double ProgressPercent { get => fraction; private set => Set(ref fraction, value); }
     private string search = "";
     public string Search { get => search; set { if (Set(ref search, value)) RefreshProjectView(); } }
     private string discoverySearch = "";
@@ -192,19 +187,6 @@ public sealed partial class MainViewModel : ObservableObject
         try { await Setup.InitializeAsync(showSetup); }
         catch (Exception error) { CatalogLoad.SetError(error); return; }
         if (discover && !Setup.IsOpen && HasConfiguredDestination) await RefreshAsync();
-    }
-    public void Cancel() => operation?.Cancel();
-    private async Task OperateAsync(Func<CancellationToken, Task> action)
-    {
-        if (IsBusy) throw new InvalidOperationException("Wait for the current operation to finish.");
-        using var cancellation = new CancellationTokenSource(); operation = cancellation; IsBusy = true; ProgressPercent = 0; IsProgressIndeterminate = true; Raise(nameof(IsProgressIndeterminate));
-        try { await action(cancellation.Token); }
-        finally { await ReloadAsync(); operation = null; IsBusy = false; }
-    }
-    private IProgress<BackupProgress> Progress()
-    {
-        var owner = operation;
-        return new Progress<BackupProgress>(p => { if (owner is null || !ReferenceEquals(owner, operation)) return; ProgressStage = p.ProjectName + " · " + p.Stage; ProgressPercent = p.Fraction * 100; IsProgressIndeterminate = false; Raise(nameof(IsProgressIndeterminate)); StatusMessage = p.Stage; });
     }
     private void ProjectChanged(object? sender, PropertyChangedEventArgs e)
     {

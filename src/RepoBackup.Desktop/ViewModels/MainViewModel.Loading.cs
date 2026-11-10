@@ -23,7 +23,7 @@ public sealed partial class MainViewModel
     public ICommand RetryPreviewCommand { get; private set; } = null!;
     public ICommand RetrySnapshotFilesCommand { get; private set; } = null!;
     public bool CanChooseBackupInputs => IsIdle && !IsClosing && CatalogLoad.IsReady;
-    public bool CanEditCatalog => CanChooseBackupInputs && !catalogSaving;
+    public bool CanEditCatalog => CanChooseBackupInputs && Queue.IsQuiescent;
     public bool CanEditSchedule => CanEditCatalog && ScheduleLoad.IsReady;
     public bool HasDestinations => Destinations.Any(d => !d.IsRetired);
     public bool HasConfiguredDestination => SelectedDestination is { IsRetired: false, RepositoryId: not null };
@@ -38,7 +38,7 @@ public sealed partial class MainViewModel
     public bool ScheduleNeedsDestination => ScheduleLoad.IsReady && ScheduleEditor.DestinationId is not null && !ScheduleDestinations.Any(d => d.Id == ScheduleEditor.DestinationId);
     public bool ShowSnapshotsEmpty => SnapshotsLoad.IsReady && Snapshots.Count == 0;
     public bool ShowFilesEmpty => SnapshotFilesLoad.IsReady && FileView.IsEmpty;
-    public string FilesEmptyText => SnapshotFiles.Count == 0 ? "No files were found in this recovery point." : "No files match your search.";
+    public string FilesEmptyText => string.IsNullOrWhiteSpace(FileSearch) ? "No files were found in this recovery point." : "No files match your search.";
     public bool NeedsSnapshotSelection => !SnapshotsLoad.IsLoading && SelectedSnapshot is null && Snapshots.Count > 0;
     public bool NeedsPreviewSelection => CatalogLoad.IsReady && SelectedProject is null;
     private List<VerificationRecord> verifications = [];

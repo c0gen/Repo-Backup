@@ -112,7 +112,7 @@ public static class DesktopLoadingTests
         {
             var fixture = Path.Combine(root, "snapshots"); var model = Model(fixture, out _);
             var first = Destination(model, fixture, "First"); var second = Destination(model, fixture, "Second"); await model.ReloadAsync();
-            var pending = Pending<List<SnapshotSummary>>(); model.SnapshotLoader = (destination, _) => destination.Id == first.Id ? pending.Task : Task.FromResult(new List<SnapshotSummary>());
+            var pending = Pending<List<SnapshotSummary>>(); model.SnapshotLoader = (destination, token) => destination.Id == first.Id ? pending.Task.WaitAsync(token) : Task.FromResult(new List<SnapshotSummary>());
             model.SelectedDestination = first; var oldLoad = model.RefreshSnapshotsAsync();
             Assert(model.SnapshotsLoad.IsLoading && !model.ShowSnapshotsEmpty, "Snapshot browser looked empty while loading.");
             model.SelectedDestination = second; await model.RefreshSnapshotsAsync();
@@ -120,14 +120,14 @@ public static class DesktopLoadingTests
             Assert(model.ShowSnapshotsEmpty && !model.SnapshotsLoad.HasError, "Old destination overwrote the new empty result.");
             var snapshot = new SnapshotItem(new SnapshotInfo(new string('b', 64), DateTimeOffset.UtcNow, [], []));
             var oldFiles = Pending<List<SnapshotFileItem>>(); var newFiles = Pending<List<SnapshotFileItem>>();
-            model.SnapshotFileLoader = (_, item, _) => item.Id == snapshot.Snapshot.Id ? oldFiles.Task : newFiles.Task;
+            model.SnapshotFileLoader = (_, item, token) => (item.Id == snapshot.Snapshot.Id ? oldFiles.Task : newFiles.Task).WaitAsync(token);
             model.SelectedSnapshot = snapshot; var oldFileLoad = model.RefreshSnapshotFilesAsync();
             model.SelectedSnapshot = new(new SnapshotInfo(new string('c', 64), DateTimeOffset.UtcNow, [], [])); var newFileLoad = model.RefreshSnapshotFilesAsync();
             oldFiles.SetResult([new(new("/stale.txt", "file", 1), "stale.txt")]); await oldFileLoad;
             Assert(model.SnapshotFilesLoad.IsLoading && model.SnapshotFiles.Count == 0, "Old files cleared the current indicator.");
             newFiles.SetResult([new(new("/current.txt", "file", 1), "current.txt")]); await newFileLoad;
-            model.FileSearch = "missing"; Assert(model.ShowFilesEmpty && model.FilesEmptyText.Contains("search"), "File search did not explain no results.");
-            model.SnapshotFileLoader = (_, _, _) => throw new IOException("Fixture file read failed"); await model.RefreshSnapshotFilesAsync();
+            model.FileSearch = "missing"; await model.Browser.QueryAsync(); Assert(model.ShowFilesEmpty && model.FilesEmptyText.Contains("search"), "File search did not explain no results.");
+            model.SnapshotFileLoader = (_, _, _) => throw new IOException("Fixture file read failed"); model.SelectedSnapshot = new(new SnapshotInfo(new string('d', 64), DateTimeOffset.UtcNow, [], [])); await model.RefreshSnapshotFilesAsync();
             Assert(model.SnapshotFilesLoad.HasError && !model.ShowFilesEmpty, "File read failure looked empty.");
             model.SnapshotFileLoader = (_, _, _) => Task.FromResult(new List<SnapshotFileItem>()); await ExecuteAsync(model.RetrySnapshotFilesCommand);
             Assert(model.SnapshotFilesLoad.IsReady && model.ShowFilesEmpty, "File retry did not recover.");

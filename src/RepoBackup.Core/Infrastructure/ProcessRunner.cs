@@ -11,10 +11,10 @@ public sealed record ProcessResult(int ExitCode, string Output, string Error)
     }
 }
 
-public class ProcessRunner
+public partial class ProcessRunner
 {
     public virtual async Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default,
-        string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
+        string? workingDirectory = null, IReadOnlyDictionary<string, string?>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -23,7 +23,11 @@ public class ProcessRunner
             WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        if (environment is not null) foreach (var (key, value) in environment) start.Environment[key] = value;
+        if (environment is not null) foreach (var (key, value) in environment)
+        {
+            if (value is null) start.Environment.Remove(key);
+            else start.Environment[key] = value;
+        }
         using var process = new Process { StartInfo = start };
         token.ThrowIfCancellationRequested();
         process.Start();

@@ -60,8 +60,8 @@ public static class DesktopWorkflowRegressionTests
         });
         await tests.Run("Delayed snapshots cannot repopulate an empty destination and superseded requests are cancelled", async () =>
         {
-            var pending = new TaskCompletionSource<List<SnapshotInfo>>(); CancellationToken firstToken = default;
-            model.SnapshotLoader = (d, token) => { if (d.Id == first.Id) { firstToken = token; return pending.Task; } return Task.FromResult(new List<SnapshotInfo>()); };
+            var pending = new TaskCompletionSource<List<SnapshotSummary>>(); CancellationToken firstToken = default;
+            model.SnapshotLoader = (d, token) => { if (d.Id == first.Id) { firstToken = token; return pending.Task; } return Task.FromResult(new List<SnapshotSummary>()); };
             model.SelectedDestination = first; var load = model.RefreshSnapshotsAsync(); model.SelectedDestination = second;
             await model.RefreshSnapshotsAsync();
             pending.SetResult([new SnapshotInfo(new string('d', 64), DateTimeOffset.UtcNow, [], [])]); await load;
@@ -70,10 +70,10 @@ public static class DesktopWorkflowRegressionTests
         await tests.Run("Delayed files reject changed snapshot and destination identities", async () =>
         {
             var pending = new TaskCompletionSource<List<SnapshotFileItem>>(); CancellationToken oldToken = default;
-            var old = new SnapshotItem(new(new string('e', 64), DateTimeOffset.UtcNow, [], []));
+            var old = new SnapshotItem(new SnapshotInfo(new string('e', 64), DateTimeOffset.UtcNow, [], []));
             model.SnapshotFileLoader = (d, s, token) => { if (s.Id == old.Snapshot.Id) { oldToken = token; return pending.Task; } return Task.FromResult(new List<SnapshotFileItem>()); };
             model.SelectedSnapshot = old;
-            model.SelectedSnapshot = new(new(new string('f', 64), DateTimeOffset.UtcNow, [], []));
+            model.SelectedSnapshot = new(new SnapshotInfo(new string('f', 64), DateTimeOffset.UtcNow, [], []));
             pending.SetResult([new(new("/wrong.txt", "file", 1), "wrong.txt")]);
             await Dispatcher.Yield(DispatcherPriority.Background);
             Assert(oldToken.IsCancellationRequested && model.SnapshotFiles.Count == 0 && model.SelectedSnapshotFile is null, "Superseded snapshot files became visible.");

@@ -31,6 +31,7 @@ public sealed class DispatcherProgress : IProgress<BackupProgress>, IDisposable
         {
             if (disposed) return;
             immediate = latest is null || latest.ProjectName != value.ProjectName || latest.Stage != value.Stage
+                || latest.RequestId != value.RequestId || latest.RunId != value.RunId
                 || latest.IsIndeterminate != value.IsIndeterminate || value.Fraction >= 1;
             latest = value;
             version = ++sequence;

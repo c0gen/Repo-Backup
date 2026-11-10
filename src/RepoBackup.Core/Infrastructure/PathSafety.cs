@@ -8,7 +8,12 @@ public static class PathSafety
     public static string Normalize(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) throw new ArgumentException("Choose an absolute local or UNC path.");
-        var full = Path.GetFullPath(path.Replace('/', Path.DirectorySeparatorChar));
+        path = path.Replace('/', Path.DirectorySeparatorChar);
+        if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) path = @"\\" + path[8..];
+        else if (path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) && path.Length > 6 && path[5] == ':') path = path[4..];
+        if (!Path.IsPathFullyQualified(path)) throw new ArgumentException("Choose an absolute local or UNC path.");
+        var full = Path.GetFullPath(path);
+        if (full.Length > 1 && full[1] == ':') full = char.ToUpperInvariant(full[0]) + full[1..];
         return Path.TrimEndingDirectorySeparator(full);
     }
 
@@ -17,6 +22,12 @@ public static class PathSafety
         path = Normalize(path); parent = Normalize(parent);
         var prefix = parent.EndsWith(Path.DirectorySeparatorChar) ? parent : parent + Path.DirectorySeparatorChar;
         return path.Equals(parent, StringComparison.OrdinalIgnoreCase) || path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string ExtendedPath(string path)
+    {
+        var normalized = Normalize(path);
+        return normalized.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + normalized[2..] : @"\\?\" + normalized;
     }
 
     public static string PhysicalPath(string path)
@@ -40,7 +51,7 @@ public static class PathSafety
         var actual = PhysicalPath(destination);
         foreach (var source in sources)
         {
-            var sourceActual = PhysicalPath(source);
+            var sourceActual = Windows.WslLinks.SourcePath(source);
             if (IsWithin(actual, sourceActual) || IsWithin(sourceActual, actual))
                 throw new InvalidOperationException("Backup destination and source trees must not overlap: " + source);
         }

@@ -42,7 +42,9 @@ function Invoke-PackageSmokeTest {
         $env:DOTNET_ROOT = Join-Path $Fixture 'no-system-dotnet'
         $env:DOTNET_ROOT_X64 = $env:DOTNET_ROOT
         $env:DOTNET_MULTILEVEL_LOOKUP = '0'
-        foreach ($taskVariable in $taskGitVariables) { [Environment]::SetEnvironmentVariable($taskVariable, $null) }
+        # PowerShell can coerce $null to an empty string for .NET string parameters.
+        # Modern .NET preserves empty environment variables; Git treats GIT_DIR='' as invalid.
+        foreach ($taskVariable in $taskGitVariables) { [Environment]::SetEnvironmentVariable($taskVariable, [Management.Automation.Language.NullString]::Value) }
         $taskGitConfig = Join-Path $Fixture 'empty-gitconfig'
         [IO.File]::WriteAllText($taskGitConfig, '')
         $env:GIT_CONFIG_GLOBAL = $taskGitConfig
@@ -110,7 +112,9 @@ function Invoke-PackageSmokeTest {
     }
     finally {
         foreach ($taskVariable in $taskSavedEnvironment.Keys) {
-            [Environment]::SetEnvironmentVariable($taskVariable, $taskSavedEnvironment[$taskVariable])
+            $taskRestoreValue = $taskSavedEnvironment[$taskVariable]
+            if ($null -eq $taskRestoreValue) { $taskRestoreValue = [Management.Automation.Language.NullString]::Value }
+            [Environment]::SetEnvironmentVariable($taskVariable, $taskRestoreValue)
         }
     }
 }

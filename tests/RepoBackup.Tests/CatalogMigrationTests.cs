@@ -12,6 +12,29 @@ public static class CatalogMigrationTests
 {
     public static async Task RunAsync(TestRunner tests, string root)
     {
+        await tests.Run("Version 2 migration and imports preserve legacy selection bases and destinations", () =>
+        {
+            var paths = new AppPaths(Path.Combine(root, "version2")); var initial = new CatalogStore(paths);
+            var project = initial.RegisterCandidate("Version 2", [Path.Combine(root, "legacy-source")], "Fixture", approved: true);
+            var selection = new SavedSelection { ProjectId = project.Id, Name = "Legacy", Paths = [project.Roots[0].Path], Exclusions = new() { RelativePatterns = ["private.txt"] } };
+            initial.SaveSelection(selection);
+            var destination = new Destination { Name = "Legacy", Path = Path.Combine(root, "legacy-repository") }; initial.SaveDestination(destination);
+            using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = paths.DatabasePath }.ToString()))
+            {
+                db.Open(); using var command = db.CreateCommand();
+                var legacySelection = JsonNode.Parse(Json.Write(selection))!.AsObject(); legacySelection.Remove("patternBase");
+                var legacyDestination = JsonNode.Parse(Json.Write(destination))!.AsObject(); legacyDestination.Remove("isRetired");
+                command.CommandText = "UPDATE selections SET payload=$selection; UPDATE destinations SET payload=$destination; PRAGMA user_version=2";
+                command.Parameters.AddWithValue("$selection", legacySelection.ToJsonString()); command.Parameters.AddWithValue("$destination", legacyDestination.ToJsonString()); command.ExecuteNonQuery();
+            }
+            var upgraded = new CatalogStore(paths);
+            Assert(upgraded.Selections().Single().PatternBase == ExclusionPatternBase.SelectedSource && !upgraded.Destinations().Single().IsRetired, "Version 2 semantics changed.");
+            var export = JsonNode.Parse(upgraded.Export())!.AsObject(); export["schemaVersion"] = 2;
+            export["selections"]![0]!.AsObject().Remove("patternBase"); export["destinations"]![0]!.AsObject().Remove("isRetired");
+            var copy = new CatalogStore(new AppPaths(Path.Combine(root, "version2-import"))); copy.Import(export.ToJsonString());
+            Assert(copy.Selections().Single().Id == selection.Id && copy.Destinations().Single().Id == destination.Id, "Version 2 import lost identities.");
+            return Task.CompletedTask;
+        });
         await tests.Run("Version 1 database migration preserves identity, selections, exclusions and history", () =>
         {
             var directory = Path.Combine(root, "migration"); var paths = new AppPaths(Path.Combine(directory, "catalog"));
@@ -28,7 +51,7 @@ public static class CatalogMigrationTests
             Assert(migrated.Id == project.Id && migrated.Roots.Single().Id == "legacy-root" && migrated.Enabled && migrated.Exclusions.RelativePatterns.Single() == "scratch/*", "Migration reset project state.");
             Assert(migrated.DiscoverySources.Single() == new DiscoverySource(DiscoveryProviders.Codex, "legacy-id") && catalog.Selections().Single().Id == selection.Id && catalog.History().Single().Id == job.Id, "Migration lost metadata or history.");
             catalog.RegisterDiscovered("Independent", [Path.Combine(directory, "other")], DiscoveryProviders.ClaudeCode, "legacy-id");
-            Assert(catalog.Projects().Count == 2 && Json.Read<CatalogExport>(catalog.Export()).SchemaVersion == 2, "Legacy global external-ID constraint remains.");
+            Assert(catalog.Projects().Count == 2 && Json.Read<CatalogExport>(catalog.Export()).SchemaVersion == 4, "Legacy global external-ID constraint remains.");
             var copy = DiscoveryFixtures.Catalog(Path.Combine(directory, "copy")); copy.Import(catalog.Export());
             Assert(copy.Projects().Count == 2 && copy.History().Single().Id == job.Id, "Version 2 export did not roundtrip."); return Task.CompletedTask;
         });

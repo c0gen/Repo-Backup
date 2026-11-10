@@ -2,12 +2,14 @@ using RepoBackup.Core.Backup;
 using RepoBackup.Core.Infrastructure;
 using RepoBackup.Core.Models;
 using RepoBackup.Core.Storage;
+using RepoBackup.Core.Windows;
 
 namespace RepoBackup.Core.Recovery;
 
-public sealed class RestoreService(AppPaths paths, CatalogStore catalog, ResticClient restic, GitRecovery git)
+public sealed class RestoreService(AppPaths paths, CatalogStore catalog, ResticClient restic, GitRecovery git,
+    Action<string, WslLinkData, string>? createWslLink = null)
 {
-    public async Task<string> RestoreAsync(Destination destination, SnapshotInfo snapshot, string target, string? selectedSnapshotPath = null, IProgress<BackupProgress>? progress = null, CancellationToken token = default)
+    public async Task<string> RestoreAsync(Destination destination, SnapshotSummary snapshot, string target, string? selectedSnapshotPath = null, IProgress<BackupProgress>? progress = null, CancellationToken token = default)
     {
         progress?.Report(new("", "Preparing restore", IsIndeterminate: true));
         using var lease = DestinationLease.Acquire(paths, destination.Path);
@@ -17,42 +19,46 @@ public sealed class RestoreService(AppPaths paths, CatalogStore catalog, ResticC
         PathSafety.EnsureDestinationOutsideSources(target, manifest.Sources.Select(s => s.OriginalPath).Append(destination.Path));
         if (Directory.Exists(target) || File.Exists(target)) throw new IOException("Restore requires a new directory that does not already exist.");
         foreach (var source in manifest.Sources)
-            if (source.RestoreFolder != PathSafety.SafeName(source.RestoreFolder) || source.SnapshotPath != PathSafety.SnapshotPath(source.OriginalPath)) throw new InvalidDataException("Unsafe source mapping in snapshot.");
-        if (selectedSnapshotPath is not null && !manifest.Sources.Any(s => selectedSnapshotPath.Equals(s.SnapshotPath, StringComparison.OrdinalIgnoreCase) || selectedSnapshotPath.StartsWith(s.SnapshotPath.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase))) throw new ArgumentException("Choose a file or folder inside a recorded project source.");
+            if (source.RestoreFolder != PathSafety.SafeName(source.RestoreFolder) || !ManifestPaths.ValidSnapshotPath(source, manifest.SchemaVersion)) throw new InvalidDataException("Unsafe source mapping in snapshot.");
         progress?.Report(new(manifest.Project.Name, "Reading snapshot contents", IsIndeterminate: true));
-        var nodes = await restic.FilesAsync(destination, snapshot.Id, token);
+        var nativeNodes = await restic.FilesAsync(destination, snapshot.Id, token);
+        var originalManifest = manifest;
+        manifest = LegacySnapshotMappings.Adapt(manifest, nativeNodes);
+        selectedSnapshotPath = LegacySnapshotMappings.AdaptSelection(originalManifest, manifest, selectedSnapshotPath);
+        if (selectedSnapshotPath is not null && !manifest.Sources.Any(s => selectedSnapshotPath.Equals(s.SnapshotPath, StringComparison.OrdinalIgnoreCase) || selectedSnapshotPath.StartsWith(s.SnapshotPath.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase))) throw new ArgumentException("Choose a file or folder inside a recorded project source.");
+        var nodes = SnapshotContents.Merge(manifest, nativeNodes);
+        var nativePaths = nativeNodes.Select(n => n.Path).ToHashSet(StringComparer.Ordinal);
         var sources = selectedSnapshotPath is null ? manifest.Sources : manifest.Sources.OrderByDescending(s => s.SnapshotPath.Length)
             .Where(s => selectedSnapshotPath.Equals(s.SnapshotPath, StringComparison.Ordinal) || selectedSnapshotPath.StartsWith(s.SnapshotPath.TrimEnd('/') + "/", StringComparison.Ordinal)).Take(1).ToList();
         if (sources.Count == 0) throw new ArgumentException("Choose a path inside a recorded source.");
         var plans = sources.Select(s => RestorePaths.Plan(s, nodes, selectedSnapshotPath)).ToList();
         var reporting = new RestoreProgress(manifest.Project.Name, plans, progress);
+        var verificationRepairs = new List<RestoreFileRepair>();
         token.ThrowIfCancellationRequested();
         Directory.CreateDirectory(target);
         try
         {
+            RestoreLinkRequirements.EnsureSupported(target, plans.SelectMany(p => p.Expected).Where(n => nativePaths.Contains(n.Path)));
             foreach (var plan in plans)
             {
                 token.ThrowIfCancellationRequested();
                 reporting.Begin(plan);
-                var args = new List<string> { "restore", snapshot.Id + ":" + plan.Tree, "--target", Path.Combine(target, "sources", plan.Source.RestoreFolder), "--verify", "--overwrite", "never", "--verbose=2" };
-                if (plan.Include is not null) { args.Add("--include"); args.Add(plan.Include); }
-                (await restic.RunAsync(destination, args, token, reporting.OnOutput, captureOutput: false)).EnsureSuccess("Restore requested contents");
+                var nativePlan = plan with { Expected = plan.Expected.Where(n => nativePaths.Contains(n.Path)).ToList() };
+                if (nativePlan.Expected.Count > 0)
+                {
+                    var args = new List<string> { "restore", snapshot.Id + ":" + plan.Tree, "--target", Path.Combine(target, "sources", plan.Source.RestoreFolder), "--verify", "--overwrite", "never", "--verbose=2" };
+                    if (plan.Include is not null) { args.Add("--include"); args.Add(plan.Include); }
+                    var result = await restic.RunAsync(destination, args, token, reporting.OnOutput, captureOutput: false);
+                    verificationRepairs.AddRange(await RestoreVerificationRepair.RepairAsync(restic, destination, snapshot,
+                        nativePlan, target, result, stage => reporting.Phase(stage), token));
+                }
                 reporting.Phase("Checking restored contents · " + plan.Source.RestoreFolder);
-                plan.Verify(target, token);
+                nativePlan.Verify(target, token);
+                RestorePaths.CreateManifestDirectories(plan, nativePaths, target);
                 reporting.CompleteSource();
             }
-            if (selectedSnapshotPath is null && manifest.Coverage == Coverage.FullProject)
-            {
-                reporting.Phase("Repairing restored Git relationships");
-                await git.RepairAsync(target, manifest.Sources, token);
-            }
-            reporting.Phase("Finalizing restore");
-            await File.WriteAllTextAsync(Path.Combine(target, "recovery-manifest.json"), Json.Write(manifest), token);
-            await File.WriteAllTextAsync(Path.Combine(target, "RESTORED.txt"), $"Restored snapshot {snapshot.Id} ({(snapshot.Successful ? "successful" : "incomplete or interrupted")}) on {DateTimeOffset.Now:O}.\nSources are in the sources folder. Original repositories were not modified.\n", token);
-            token.ThrowIfCancellationRequested();
-            catalog.SaveSetting("lastRestore", new { destination.Id, snapshotId = snapshot.Id, target, at = DateTimeOffset.UtcNow, successful = true });
-            reporting.Complete();
-            return target;
+            return await new RestoreProjectFinalizer(catalog, git, createWslLink).FinishAsync(destination, snapshot, manifest,
+                target, plans, nativePaths, reporting, verificationRepairs, selectedSnapshotPath is null && manifest.Coverage == Coverage.FullProject, token);
         }
         catch
         {
@@ -66,7 +72,7 @@ public sealed class RestoreService(AppPaths paths, CatalogStore catalog, ResticC
         using var lease = DestinationLease.Acquire(paths, destination.Path);
         await restic.PrepareRepositoryAsync(destination, token);
         var manifests = new List<RecoveryManifest>(); var history = new List<JobRecord>();
-        foreach (var snapshot in (await restic.SnapshotsAsync(destination, token)).OrderByDescending(s => s.Time))
+        foreach (var snapshot in (await restic.SnapshotSummariesAsync(destination, token)).OrderByDescending(s => s.Time))
         {
             RecoveryManifest manifest;
             try

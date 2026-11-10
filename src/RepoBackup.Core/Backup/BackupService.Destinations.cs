@@ -19,10 +19,8 @@ public sealed partial class BackupService
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Enter a destination name.");
         path = PathSafety.Normalize(path);
         PathSafety.EnsureDestinationOutsideSources(path, catalog.Projects().Where(p => p.Enabled && p.Reviewed).SelectMany(p => p.Roots).Select(r => r.Path));
-        var existing = catalog.Destinations().FirstOrDefault(d => PathSafety.PhysicalPath(d.Path).Equals(PathSafety.PhysicalPath(path), StringComparison.OrdinalIgnoreCase));
+        var existing = catalog.Destinations().FirstOrDefault(d => !d.IsRetired && PathSafety.PhysicalPath(d.Path).Equals(PathSafety.PhysicalPath(path), StringComparison.OrdinalIgnoreCase));
         if (existing is not null && !openExisting) throw new InvalidOperationException("This destination is already registered. Use Open Existing to reconnect it.");
-        if (existing is not null && existing.Protection != protection)
-            throw new InvalidOperationException("Choose the registered destination's protection mode. Opening a repository does not change its protection.");
         if (!Directory.Exists(Path.GetPathRoot(path))) throw new IOException("The destination drive or network share is unavailable.");
         if (openExisting && !File.Exists(Path.Combine(path, "config"))) throw new IOException("Choose an existing restic repository containing its config file.");
         if (!openExisting && Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()) throw new IOException("A new repository requires an empty folder. Use Open Existing for an initialized repository.");
@@ -31,12 +29,30 @@ public sealed partial class BackupService
         if (existing is not null)
         {
             // Validate under a temporary identity before replacing any registered credential.
-            var validation = existing with { Id = Guid.NewGuid().ToString("N"), Path = path };
+            var validation = new Destination { Name = name.Trim(), Path = path, Protection = protection };
             if (protection == DestinationProtection.RecoveryKey) credentials.Save(validation.Id, recoveryKey!);
             try
             {
                 using var reconnectLease = DestinationLease.Acquire(paths, path);
                 var repositoryId = await restic.RepositoryIdentityAsync(validation, token);
+                token.ThrowIfCancellationRequested();
+                if (existing.RepositoryId is not null && existing.RepositoryId != repositoryId)
+                {
+                    var replacement = validation with { Id = Guid.NewGuid().ToString("N"), RepositoryId = repositoryId };
+                    if (protection == DestinationProtection.RecoveryKey) credentials.Save(replacement.Id, recoveryKey!);
+                    try { catalog.ReplaceDestination(existing, replacement); }
+                    catch { if (protection == DestinationProtection.RecoveryKey) credentials.Delete(replacement.Id); throw; }
+                    try
+                    {
+                        foreach (var schedule in catalog.Schedules().Where(s => s.DestinationId == existing.Id)) WindowsScheduler.DisableTaskIfPresent(schedule.Id);
+                    }
+                    catch (Exception error) when (error is System.Runtime.InteropServices.COMException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+                    {
+                        throw new IOException("The replacement repository is ready and its old catalog schedules are disabled. Windows could not disable a task; review Settings before reassigning schedules. " + error.Message, error);
+                    }
+                    return replacement;
+                }
+                if (existing.Protection != protection) throw new InvalidOperationException("Opening the same repository cannot change its registered protection mode.");
                 var reconnected = existing with { Name = name.Trim(), Path = path, RepositoryId = repositoryId };
                 if (protection == DestinationProtection.RecoveryKey) credentials.Save(existing.Id, recoveryKey!);
                 catalog.SaveDestination(reconnected); return reconnected;

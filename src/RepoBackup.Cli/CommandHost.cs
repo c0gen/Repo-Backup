@@ -19,13 +19,14 @@ public static class CommandHost
         register --path <folder> [--name <name>]  add-folder --path <folder> [--name <name>]
         projects                                approve --project <id> [--disable]
         relink --project <id> --root <id> --path <new folder>
+        resolve-duplicates --project <id>        keep this project's exclusions and merge equivalent roots
         destination-add --name <name> --path <empty folder>
           [--protection password-free|recovery-key] [--key-file <recovery key>]
         destination-open --name <name> --path <repository>
           [--protection password-free|recovery-key] [--key-file <recovery key>]
         Protection defaults to password-free, or recovery-key when --key-file is supplied.
         destinations                            key-export --destination <id> --output <file>
-        backup --destination <id> (--all-enabled | --project <id> | --selection <id>) [--vss]
+        backup --destination <id> (--all-enabled | --project <id> | --selection <id>) [--vss] [--read-mode incremental|full]
         preview --project <id> [--selection <id>]
         snapshots --destination <id>            files --destination <id> --snapshot <id>
         restore --destination <id> --snapshot <id> --target <NEW directory> [--path <snapshot path>]
@@ -71,7 +72,7 @@ public static class CommandHost
                 return 0;
             }
             var app = new ApplicationServices(dataDirectory);
-            ProjectEntry Project() => app.Catalog.Projects().SingleOrDefault(p => p.Id == Required("--project")) ?? throw new ArgumentException("Unknown project.");
+            ProjectEntry Project() => app.Catalog.Projects().SingleOrDefault(p => p.Id == Required("--project") || p.LegacyIds.Contains(Required("--project"))) ?? throw new ArgumentException("Unknown project.");
             Destination Destination() => app.Catalog.Destinations().SingleOrDefault(d => d.Id == Required("--destination")) ?? throw new ArgumentException("Unknown destination.");
             SavedSelection? Selection() => Optional("--selection") is { } id ? app.Catalog.Selections().SingleOrDefault(s => s.Id == id) ?? throw new ArgumentException("Unknown saved selection.") : null;
             async Task Print<T>(T value) => await output.WriteLineAsync(Json.Write(value));
@@ -93,6 +94,7 @@ public static class CommandHost
                 case "projects": await Print(app.Catalog.Projects()); break;
                 case "approve": var project = Project(); app.Catalog.SaveProject(project with { Reviewed = true, Dismissed = false, Enabled = !flags.Contains("--disable") }); break;
                 case "relink": app.Catalog.RelinkRoot(Project().Id, Required("--root"), Required("--path")); break;
+                case "resolve-duplicates": app.Catalog.ResolveDuplicateProjects(Project().Id); break;
                 case "destination-add": case "destination-open":
                     var keyFile = Optional("--key-file");
                     var protection = Optional("--protection") switch
@@ -116,12 +118,17 @@ public static class CommandHost
                 case "backup":
                     var selection = Selection();
                     var projects = selection is not null ? app.Catalog.Projects().Where(p => p.Id == selection.ProjectId) : flags.Contains("--all-enabled") ? app.Catalog.Projects().Where(p => p.Enabled && p.Reviewed && !p.Dismissed) : [Project()];
-                    var jobs = await app.Backups.RunAsync(Destination(), projects, selection, token: token, useVss: flags.Contains("--vss")); await Print(jobs);
+                    BackupReadMode? readMode = Optional("--read-mode") switch
+                    {
+                        null => null, "incremental" => BackupReadMode.Incremental, "full" => BackupReadMode.Full,
+                        _ => throw new ArgumentException("Choose --read-mode incremental or full.")
+                    };
+                    var jobs = await app.Backups.RunAsync(Destination(), projects, selection, token: token, useVss: flags.Contains("--vss"), readMode: readMode); await Print(jobs);
                     return RunOutcome.ExitCode(jobs);
                 case "snapshots": await Print(await app.Restic.SnapshotsAsync(Destination(), token)); break;
-                case "files": await Print(await app.Restic.FilesAsync(Destination(), Required("--snapshot"), token)); break;
+                case "files": await Print(await RepoBackup.Core.Recovery.SnapshotContents.ListAsync(app.Restic, Destination(), Required("--snapshot"), token)); break;
                 case "restore":
-                    var destination = Destination(); var snapshot = (await app.Restic.SnapshotsAsync(destination, token)).Single(s => s.Id.StartsWith(Required("--snapshot"), StringComparison.Ordinal));
+                    var destination = Destination(); var snapshot = (await app.Restic.SnapshotSummariesAsync(destination, token)).Single(s => s.Id.StartsWith(Required("--snapshot"), StringComparison.Ordinal));
                     await output.WriteLineAsync(await app.Restore.RestoreAsync(destination, snapshot, Required("--target"), Optional("--path"), token: token)); break;
                 case "verify": var verification = await app.Backups.VerifyAsync(Destination(), token); await Print(verification); return verification.Outcome == Outcome.Cancelled ? 130 : verification.Outcome == Outcome.Successful ? 0 : 2;
                 case "recover": await Print(new { rebuiltProjects = await app.Restore.RebuildCatalogAsync(Destination(), token) }); break;
@@ -129,7 +136,7 @@ public static class CommandHost
                 case "import": app.Catalog.Import(await File.ReadAllTextAsync(Required("--input"), token)); break;
                 case "history": await Print(app.Catalog.History()); break;
                 case "selection-save":
-                    var saved = new SavedSelection { ProjectId = Project().Id, Name = Required("--name"), Paths = Required("--paths").Split(';').Select(PathSafety.Normalize).ToList() };
+                    var saved = SavedSelection.FromProject(Project(), Required("--name"), Required("--paths").Split(';').Select(PathSafety.Normalize));
                     await app.Planner.PreviewAsync(Project(), saved, token); app.Catalog.SaveSelection(saved); await Print(saved); break;
                 case "schedule-save":
                     var schedule = new ScheduleDefinition { Id = Optional("--id") ?? Guid.NewGuid().ToString("N"), DestinationId = Destination().Id, SelectionId = Selection()?.Id, Kind = Enum.Parse<ScheduleKind>(Required("--kind"), true), Time = TimeOnly.Parse(Optional("--time") ?? "18:00"), Day = Enum.Parse<DayOfWeek>(Optional("--day") ?? "Friday", true), IntervalHours = int.Parse(Optional("--hours") ?? "24"), Enabled = !flags.Contains("--disabled") };

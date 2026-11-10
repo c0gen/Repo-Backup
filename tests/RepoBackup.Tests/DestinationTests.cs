@@ -51,7 +51,7 @@ public static class DestinationTests
             var destination = await app.Backups.AddDestinationAsync("Protected", Path.Combine(root, "protected"));
             var originalKey = app.Credentials.Get(destination.Id); var before = app.Catalog.Export();
             await Throws<IOException>(() => app.Backups.AddDestinationAsync("Bad key", destination.Path, "a-deliberately-invalid-recovery-key", openExisting: true));
-            await Throws<InvalidOperationException>(() => app.Backups.AddDestinationAsync("Bad mode", destination.Path, openExisting: true, protection: DestinationProtection.PasswordFree));
+            await Throws<IOException>(() => app.Backups.AddDestinationAsync("Bad mode", destination.Path, openExisting: true, protection: DestinationProtection.PasswordFree));
             Assert(app.Catalog.Export() == before && app.Credentials.Get(destination.Id) == originalKey, "Failed reconnect changed registered credentials or metadata.");
             var fresh = new ApplicationServices(Path.Combine(root, "failed-open"), discoveryProviders: []);
             await Throws<IOException>(() => fresh.Backups.AddDestinationAsync("Bad key", destination.Path, "a-deliberately-invalid-recovery-key", openExisting: true));

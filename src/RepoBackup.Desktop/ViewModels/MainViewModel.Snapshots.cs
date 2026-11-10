@@ -1,75 +1,62 @@
 using RepoBackup.Core.Models;
+using RepoBackup.Desktop.Infrastructure;
 
 namespace RepoBackup.Desktop.ViewModels;
 
 public sealed partial class MainViewModel
 {
-    public Func<Destination, CancellationToken, Task<List<SnapshotInfo>>>? SnapshotLoader { get; set; }
-    public Func<Destination, SnapshotInfo, CancellationToken, Task<List<SnapshotFileItem>>>? SnapshotFileLoader { get; set; }
-    public Func<Destination, SnapshotInfo, string, string?, IProgress<BackupProgress>, CancellationToken, Task<string>>? RestoreExecutor { get; set; }
+    public Func<Destination, CancellationToken, Task<List<SnapshotSummary>>>? SnapshotLoader { get; set; }
+    public Func<Destination, SnapshotSummary, CancellationToken, Task<List<SnapshotFileItem>>>? SnapshotFileLoader { get; set; }
+    public Func<Destination, SnapshotSummary, string, string?, IProgress<BackupProgress>, CancellationToken, Task<string>>? RestoreExecutor { get; set; }
+    private void InitializeBrowser()
+    {
+        Browser.SummaryLoader = (destination, token) => operations.ReadAsync(async cancellation =>
+        {
+            if (SnapshotLoader is { } loader) return await loader(destination, cancellation);
+            return await Task.Run(async () =>
+            {
+                await Services.Restic.RepositoryIdentityAsync(destination, cancellation);
+                return await Services.Restic.SnapshotSummariesAsync(destination, cancellation);
+            }, cancellation);
+        }, () => Queue.IsQuiescent && IsIdle, token);
+        Browser.FileLoader = (destination, snapshot, token) => operations.ReadAsync(async cancellation =>
+        {
+            if (SnapshotFileLoader is { } loader) return await loader(destination, snapshot, cancellation);
+            return await Task.Run(async () =>
+            {
+                var manifest = await Services.Restic.ManifestAsync(destination, snapshot, cancellation);
+                var files = await Services.Restic.FilesAsync(destination, snapshot.Id, cancellation);
+                return SnapshotBrowser.ProjectFiles(Core.Recovery.SnapshotContents.Merge(manifest, files), manifest).ToList();
+            }, cancellation);
+        }, () => Queue.IsQuiescent && IsIdle, token);
+        Browser.CanonicalSeries = series => series.StartsWith("project-", StringComparison.Ordinal)
+            ? "project-" + (Projects.FirstOrDefault(p => p.Id == series[8..] || p.Project.LegacyIds.Contains(series[8..]))?.Id ?? series[8..]) : series;
+        Browser.SeriesLabel = series => series.StartsWith("project-", StringComparison.Ordinal)
+            ? Projects.FirstOrDefault(p => "project-" + p.Id == series)?.Name
+            : Selections.FirstOrDefault(s => "selection-" + s.Selection?.Id == series)?.Name;
+        Browser.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(Browser.SelectedSnapshot)) Raise(nameof(SelectedSnapshot));
+            if (e.PropertyName == nameof(Browser.SelectedFile)) Raise(nameof(SelectedSnapshotFile));
+            if (e.PropertyName == nameof(Browser.Search)) Raise(nameof(FileSearch));
+            RaiseLoadProperties();
+        };
+    }
     private void InitializeSnapshotCommands()
     {
-        RefreshSnapshotsCommand = Command(RefreshSnapshotsAsync, () => SelectedDestination is not null);
-        RestoreCommand = Command(() => RestoreAsync(false, false), () => SelectedDestination is not null && SelectedSnapshot is not null);
-        RestoreFileCommand = Command(() => RestoreAsync(true, false), () => SelectedDestination is not null && SelectedSnapshot is not null && SelectedSnapshotFile is not null);
-        TestRestoreCommand = Command(() => RestoreAsync(false, true), () => SelectedDestination is not null && SelectedSnapshot is not null);
-        RecoverCatalogCommand = Command(async () =>
+        RefreshSnapshotsCommand = ExclusiveCommand(RefreshSnapshotsAsync, () => SelectedDestination is { IsRetired: false });
+        RestoreCommand = ExclusiveCommand(() => RestoreAsync(false, false), () => SelectedDestination is { IsRetired: false } && SelectedSnapshot is not null);
+        RestoreFileCommand = ExclusiveCommand(() => RestoreAsync(true, false), () => SelectedDestination is { IsRetired: false } && SelectedSnapshot is not null && SelectedSnapshotFile is not null);
+        TestRestoreCommand = ExclusiveCommand(() => RestoreAsync(false, true), () => SelectedDestination is { IsRetired: false } && SelectedSnapshot is not null);
+        RecoverCatalogCommand = ExclusiveCommand(async () =>
         {
             var destination = SelectedDestination!;
             await OperateAsync(async token => { ProgressStage = "Rebuilding catalog from recovery metadata"; var count = await Services.Restore.RebuildCatalogAsync(destination, token); StatusMessage = $"Recovered {count} project identities. Relink missing roots before enabling them."; });
-        }, () => SelectedDestination is not null);
+        }, () => SelectedDestination is { IsRetired: false });
     }
-    public async Task RefreshSnapshotsAsync()
-    {
-        var destination = SelectedDestination;
-        using var request = SnapshotsLoad.Begin(DestinationIdentity);
-        Snapshots.Clear(); SelectedSnapshot = null;
-        if (destination is null) { SnapshotsLoad.Cancel(request); return; }
-        try
-        {
-            List<SnapshotInfo> snapshots;
-            if (SnapshotLoader is { } loader) snapshots = await loader(destination, request.Token);
-            else
-            {
-                snapshots = await Task.Run(async () =>
-                {
-                    await Services.Restic.RepositoryIdentityAsync(destination, request.Token);
-                    return await Services.Restic.SnapshotsAsync(destination, request.Token);
-                }, request.Token);
-            }
-            if (!SnapshotsLoad.Accepts(request)) return;
-            foreach (var snapshot in snapshots) Snapshots.Add(new(snapshot));
-            StatusMessage = $"{snapshots.Count} recovery points loaded."; SelectedSnapshot = Snapshots.FirstOrDefault(); SnapshotsLoad.Complete(request);
-        }
-        catch (OperationCanceledException) { SnapshotsLoad.Cancel(request); }
-        catch (Exception e) { SnapshotsLoad.Fail(request, e); }
-    }
-    private string FileRequestIdentity => DestinationIdentity + "|" + SelectedSnapshot?.Snapshot.Id;
-    private async Task LoadSnapshotFilesAsync()
-    {
-        using var request = SnapshotFilesLoad.Begin(FileRequestIdentity);
-        SnapshotFiles.Clear(); SelectedSnapshotFile = null; var destination = SelectedDestination; var snapshot = SelectedSnapshot;
-        if (destination is null || snapshot is null) { SnapshotFilesLoad.Cancel(request); return; }
-        try
-        {
-            List<SnapshotFileItem> files;
-            if (SnapshotFileLoader is { } loader) files = await loader(destination, snapshot.Snapshot, request.Token);
-            else
-            {
-                files = await Task.Run(async () =>
-                {
-                    var manifest = await Services.Restic.ManifestAsync(destination, snapshot.Snapshot, request.Token);
-                    return SnapshotBrowser.ProjectFiles(await Services.Restic.FilesAsync(destination, snapshot.Snapshot.Id, request.Token), manifest).ToList();
-                }, request.Token);
-            }
-            if (!SnapshotFilesLoad.Accepts(request)) return;
-            foreach (var file in files) SnapshotFiles.Add(file);
-            SnapshotFilesLoad.Complete(request);
-        }
-        catch (OperationCanceledException) { SnapshotFilesLoad.Cancel(request); }
-        catch (Exception e) { SnapshotFilesLoad.Fail(request, e); }
-    }
-    public Task RefreshSnapshotFilesAsync() => LoadSnapshotFilesAsync();
+    public Task RefreshSnapshotsAsync() => Browser.RefreshAsync();
+    private Task LoadSnapshotFilesAsync() => Browser.LoadFilesAsync();
+    public Task RefreshSnapshotFilesAsync() => Browser.LoadFilesAsync();
     private async Task RestoreAsync(bool selectedPath, bool test)
     {
         var destination = SelectedDestination!; var snapshot = SelectedSnapshot!.Snapshot; var file = selectedPath ? SelectedSnapshotFile?.Path : null;

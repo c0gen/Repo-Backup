@@ -12,9 +12,10 @@ public static class SnapshotBrowser
 {
     public static IEnumerable<SnapshotFileItem> ProjectFiles(IEnumerable<SnapshotFile> files, RecoveryManifest manifest)
     {
+        var sources = manifest.Sources.OrderByDescending(s => s.SnapshotPath.Length).ToArray();
         foreach (var file in files)
         {
-            var source = manifest.Sources.OrderByDescending(s => s.SnapshotPath.Length).FirstOrDefault(s =>
+            var source = sources.FirstOrDefault(s =>
                 file.Path.Equals(s.SnapshotPath, StringComparison.OrdinalIgnoreCase) ||
                 file.Path.StartsWith(s.SnapshotPath.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase));
             if (source is null) continue;

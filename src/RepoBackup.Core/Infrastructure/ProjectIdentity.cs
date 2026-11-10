@@ -35,9 +35,9 @@ public static class ProjectIdentity
 
     public static ProjectEntry Normalize(ProjectEntry project)
     {
-        if (string.IsNullOrWhiteSpace(project.Id) || project.Roots is not { Count: > 0 } || project.DiscoverySources is null)
+        if (string.IsNullOrWhiteSpace(project.Id) || project.Roots is not { Count: > 0 } || project.DiscoverySources is null || project.LegacyIds is null)
             throw new InvalidDataException("Project needs an identity and at least one source root.");
-        if (project.Roots.Any(r => string.IsNullOrWhiteSpace(r.Id) || r.PreviousPaths is null || r.Aliases is null))
+        if (project.Roots.Any(r => string.IsNullOrWhiteSpace(r.Id) || r.PreviousPaths is null || r.Aliases is null || r.LegacyIds is null))
             throw new InvalidDataException("Invalid source root identity or aliases.");
         var sources = project.DiscoverySources.Count == 0
             ? new List<DiscoverySource> { new(DiscoveryProviders.FromOrigin(project.Origin), project.ExternalId) }
@@ -45,6 +45,7 @@ public static class ProjectIdentity
         if (sources.Any(s => string.IsNullOrWhiteSpace(s.ProviderId))) throw new InvalidDataException("Invalid discovery provider.");
         return project with
         {
+            LegacyIds = project.LegacyIds.Where(id => !string.IsNullOrWhiteSpace(id) && id != project.Id).Distinct().ToList(),
             Roots = project.Roots.Select(r => Observe(r, [])).ToList(),
             DiscoverySources = sources.Select(s => s with { ExternalId = string.IsNullOrWhiteSpace(s.ExternalId) ? null : s.ExternalId }).Distinct().ToList()
         };

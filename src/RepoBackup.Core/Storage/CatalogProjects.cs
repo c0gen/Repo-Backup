@@ -39,9 +39,11 @@ public sealed partial class CatalogStore
         if (current is null) return project;
         return project with
         {
+            LegacyIds = current.LegacyIds.Concat(project.LegacyIds).Distinct().ToList(),
+            IdentityConflict = current.IdentityConflict,
             DiscoverySources = current.DiscoverySources.Concat(project.DiscoverySources).Distinct().ToList(),
             Roots = project.Roots.Select(root => current.Roots.FirstOrDefault(r => r.Id == root.Id) is { } old
-                ? ProjectIdentity.Observe(root with { PreviousPaths = old.PreviousPaths.Concat(root.PreviousPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToList() }, old.Aliases)
+                ? ProjectIdentity.Observe(root with { LegacyIds = old.LegacyIds.Concat(root.LegacyIds).Distinct().ToList(), PreviousPaths = old.PreviousPaths.Concat(root.PreviousPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToList() }, old.Aliases)
                 : root).ToList()
         };
     }
@@ -53,7 +55,7 @@ public sealed partial class CatalogStore
         for (var i = 0; i < roots.Count; i++)
         {
             if (roots.Skip(i + 1).Any(r => r.Keys.Overlaps(roots[i].Keys))) throw new InvalidDataException("Project repeats the same source folder.");
-            if (otherProjects.Where(p => p.Id != project.Id).Any(p => p.Roots.Any(r => ProjectIdentity.Keys(r).Overlaps(roots[i].Keys))))
+            if (otherProjects.Where(p => p.Id != project.Id && !(p.IdentityConflict && project.IdentityConflict)).Any(p => p.Roots.Any(r => ProjectIdentity.Keys(r).Overlaps(roots[i].Keys))))
                 throw new InvalidDataException("A source folder or its alias is already registered by another project.");
         }
     }
@@ -65,7 +67,9 @@ public sealed partial class CatalogStore
             using var db = Open(); using var transaction = db.BeginTransaction(deferred: false);
             var existing = ReadAll<ProjectEntry>(db, "projects", transaction);
             project = PrepareSavedProject(project, existing.FirstOrDefault(p => p.Id == project.Id));
-            ValidateOwnership(project, existing); WriteProject(db, transaction, project); transaction.Commit();
+            ValidateOwnership(project, existing); WriteProject(db, transaction, project);
+            if (project.IdentityConflict) ReconcileIdentities(db, transaction);
+            transaction.Commit();
         }
     }
 
@@ -134,10 +138,10 @@ public sealed partial class CatalogStore
         {
             using var db = Open(); using var transaction = db.BeginTransaction(deferred: false);
             var existing = ReadAll<ProjectEntry>(db, "projects", transaction);
-            var project = existing.Single(p => p.Id == projectId); var oldRoot = project.Roots.Single(r => r.Id == rootId);
+            var project = existing.Single(p => CatalogIdentityReconciler.Owns(p, projectId)); var oldRoot = project.Roots.Single(r => r.Id == rootId || r.LegacyIds.Contains(rootId));
             project = ProjectIdentity.Normalize(project with
             {
-                Roots = project.Roots.Select(r => r.Id == rootId
+                Roots = project.Roots.Select(r => r.Id == oldRoot.Id
                     ? r with { Path = newPath, PreviousPaths = r.PreviousPaths.Append(r.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), Aliases = ProjectIdentity.Keys(r).ToList() }
                     : r).ToList()
             });
@@ -152,6 +156,7 @@ public sealed partial class CatalogStore
                 }).ToList() };
                 Upsert(db, transaction, "selections", updated.Id, updated);
             }
+            if (project.IdentityConflict) ReconcileIdentities(db, transaction);
             transaction.Commit();
         }
     }

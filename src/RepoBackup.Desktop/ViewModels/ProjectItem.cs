@@ -44,7 +44,7 @@ public sealed class ProjectItem : ObservableObject
         var protection = ProjectProtection.For(Id, destinationId, history);
         var last = protection.LatestAttempt;
         LastBackup = protection.LastBackup; NeedsBackup = protection.NeedsBackup;
-        Status = !Available ? "Drive unavailable" : last?.Backup switch { Outcome.Running => "Backing up", Outcome.Incomplete => "Incomplete coverage", Outcome.Failed => "Last backup failed", Outcome.Interrupted => "Interrupted", Outcome.Cancelled => "Cancelled", Outcome.Successful when last.Verification == Outcome.Successful => last.Cleanup is Outcome.Failed or Outcome.Cancelled or Outcome.Interrupted ? "Ready · cleanup " + last.Cleanup.ToString().ToLowerInvariant() : "Ready", Outcome.Successful => "Verification " + last.Verification.ToString().ToLowerInvariant(), _ => "Not backed up" };
+        Status = project.IdentityConflict ? "Resolve duplicate settings" : !Available ? "Source unavailable · relink" : last?.Backup switch { Outcome.Running => "Backing up", Outcome.Incomplete => "Incomplete coverage", Outcome.Failed => "Last backup failed", Outcome.Interrupted => "Interrupted", Outcome.Cancelled => "Cancelled", Outcome.Successful when last.Verification == Outcome.Successful => last.Cleanup is Outcome.Failed or Outcome.Cancelled or Outcome.Interrupted ? "Ready · cleanup " + last.Cleanup.ToString().ToLowerInvariant() : last.Issues.Any(i => i.Severity == BackupIssueSeverity.Advisory) ? "Ready · advisories" : "Ready", Outcome.Successful => "Verification " + last.Verification.ToString().ToLowerInvariant(), _ => "Not backed up" };
         StatusBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(Status.StartsWith("Ready") ? "#79D994" : Status == "Backing up" ? "#65ADFF" : "#FFC361"));
         foreach (var property in new[] { nameof(LastBackup), nameof(LastBackupText), nameof(NeedsBackup), nameof(Status), nameof(StatusBrush) }) Raise(property);
     }
@@ -55,12 +55,12 @@ public sealed record SelectionOption(string Name, SavedSelection? Selection)
     public override string ToString() => Name;
 }
 public sealed record SourceNode(string Name, string Detail, string Icon, IReadOnlyList<SourceNode> Children);
-public sealed record SnapshotItem(SnapshotInfo Snapshot)
+public sealed record SnapshotItem(SnapshotSummary Snapshot)
 {
     public string Name { get { try { return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(Snapshot.TagValue("name") ?? "")); } catch (FormatException) { return "Unknown project"; } } }
     public string Date => Snapshot.Time.LocalDateTime.ToString("MMM d, yyyy · h:mm tt");
     public string Coverage => Snapshot.Coverage == Core.Models.Coverage.FullProject ? "Full project" : "Partial selection";
-    public string Status => Snapshot.Successful ? "Successful" : "Incomplete / interrupted";
+    public string Status => Snapshot.Successful ? Snapshot.Tags.Contains("advisories") ? "Successful · advisories" : "Successful" : "Incomplete / interrupted";
     public Outcome Outcome => Snapshot.Successful ? Outcome.Successful : Outcome.Incomplete;
     public string ShortId => Snapshot.Id[..8];
 }

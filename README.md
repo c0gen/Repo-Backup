@@ -16,6 +16,8 @@ Built with C# / .NET 10 and WPF, the desktop app, command-line interface, and sc
 - **Git-aware backups:** full-project snapshots include local Git history, the index, working files, linked worktrees, and local Git LFS and submodule data.
 - **Folder selections and previews:** save partial selections, inspect file counts and size estimates, and customize dependency and cache exclusions. Tracked files are preserved; `.gitignore` does not determine backup contents.
 - **Versioned recovery:** keep the latest ten successful snapshots per project or saved selection. Partial selections have their own retention series, so they cannot displace full-project recovery points.
+- **Efficient repeat backups:** reuse unchanged source data, reread all source files on the first backup after seven days, and verify and reclaim space once per destination run.
+- **Background backup queue:** queue projects or saved selections while a backup runs, reorder or remove waiting work in Activity, and pause/resume between projects. Live progress shows the active destination, stage, elapsed time, file and byte counts, and a current source path when available.
 - **Verification and restore:** verify repository data, test restores, and recover files into a new directory. Backup, verification, and cleanup results are recorded separately.
 - **Optional scheduling:** configure daily, weekly, or interval backups through Windows Task Scheduler. The hidden runner works while the GUI is closed, catches up missed runs, and prevents overlapping scheduled jobs.
 - **Portable recovery:** snapshots include recovery manifests. Open the backup repository and rebuild the catalog on a replacement computer. Password-free repositories need only the backup folder; protected repositories also need their exported recovery key.
@@ -85,6 +87,12 @@ The first launch opens a short setup wizard. Existing configured installations o
 4. **Review in Projects:** Check the destination and included projects, then choose **Open Projects**. The available projects you included are selected. Review the source preview and exclusions, then choose **Back Up Selected** or **Back Up All Enabled**.
 5. Check backup, verification, and cleanup results in **Activity**. Use **Snapshots & Restore** to browse recovery points or perform a test restore.
 
+Manual backup buttons add one queue entry per project or saved selection and return immediately. You can browse projects, change the next request's destination, and add more backups while work runs. **Activity → Backup queue** shows waiting order and lets you move or remove entries. Repeated requests for the same unfinished project/selection and destination are skipped with an explanation.
+
+**Pause** finishes the current project and pending verification/cleanup before stopping; **Resume** follows the remaining order. **Cancel current** cancels that project and continues the queue. During shared verification/cleanup, use **Cancel all** to cancel the run and discard waiting entries. Failed requests remain in Activity and other queued requests continue. Repository configuration, fresh snapshot browsing, and restore/verification operations become available once the queue is empty or fully paused.
+
+Queued requests capture their destination, source selection, exclusions, VSS setting, and read mode; they read file contents when execution starts. The queue is kept only while the app is open. Closing with unfinished work offers to keep the app open or cancel active work, discard waiting requests, and close after resources are released. Scheduling continues to use the separate hidden runner and does not use the desktop queue.
+
 Choose **Do this later** to leave setup at any point when no configuration is being saved. Your saved destination and project choices are kept. **Continue setup** resumes from the next unmet prerequisite; the wizard does not reopen automatically after dismissal. You can also reopen it from **Settings → Review setup**. For recovery from an existing repository, leave the wizard and use **Destinations → Rebuild catalog from snapshots**, then browse **Snapshots & Restore**.
 
 Setup does not start a backup or enable scheduling. Enable scheduling in **Settings** after configuring the projects and destination you want to use. Loading indicators distinguish pending information from empty results, and failed reads offer a retry in the affected panel.
@@ -93,13 +101,27 @@ Setup does not start a backup or enable scheduling. Enable scheduling in **Setti
 
 Full-project backups include Git metadata, unfinished changes, untracked and ignored configuration such as `.env`, and project assets. Known dependency and cache directories such as `node_modules`, `.venv`, `__pycache__`, and `obj` are excluded by default, with tracked files preserved. Generic `build` and `dist` folders remain included unless you explicitly exclude them. Review the preview to see the rules for each project or saved selection.
 
+WSL/Linux symbolic links on Windows volumes are preserved, including legacy links, dangling targets, and links in Git worktrees. Version 4 recovery manifests store their target paths, excluded-empty folders, nested Git metadata locations, and resolved worktree relationships. Repo Backup recreates links without following targets and restores recorded empty folders without copying excluded data. Existing version 1–3 snapshots remain readable; previously omitted data cannot be recovered retroactively.
+
+New folder selections inherit project-relative exclusion patterns. Existing selections retain their original pattern base, shown in the exclusion editor; **Use project exclusions** explicitly converts a selection. Opening a different repository at a saved destination path creates separate history and disables the previous destination's schedules until they are reassigned and enabled.
+
 Protected destinations save their credentials with Windows DPAPI for the current user. Password-free destinations generate no saved credential. Restic still uses its encrypted storage format in password-free mode, but anyone with the repository can unlock it; backups are restored through Repo Backup or restic rather than browsed as ordinary files. The catalog, credentials, job metadata, cache, and locks live under `%LOCALAPPDATA%\RepoBackup`. Catalog exports omit credentials; export protected destinations' recovery keys separately. Pass `--data-dir <absolute-directory>` to the app or CLI to use an isolated catalog.
 
 Restores use a new directory. Git recovery reconstructs worktree and submodule paths inside the restored copy without modifying the original repository. The backup repository is sufficient to rebuild a catalog on a replacement computer; protected repositories additionally require their recovery key. Existing repositories keep their current protection when upgrading or opening them.
 
+Foreign and confirmed stale worktree registrations appear as advisories on successful backups. Recovery archives their administrative metadata and preserves available history. Missing selected roots, unavailable drives, locked unavailable worktrees, unreadable files, and unresolved required Git data remain coverage failures. Source-change diagnostics report added, removed, modified, and metadata-changed counts with representative paths. Missing roots stay enabled until you relink or explicitly change their configuration.
+
+Catalog version 4 consolidates equivalent ordinary and extended Windows paths while retaining historical project/root identities. A pre-migration catalog backup is saved beside the database. Conflicting exclusion settings remain separate until you choose **Resolve duplicate settings**, or run `resolve-duplicates --project <survivor-id>`. Saved selections retain separate backup series. Snapshot lists stream lightweight summaries without allocating their potentially millions of source-path entries; the explicit CLI `snapshots` command retains its full-path output.
+
 See [Recovery instructions](docs/RECOVERY.md) for full and selective restores, replacement-computer recovery, and verification details.
 
 ## Command-line usage
+
+Backups use incremental reads by default. Files with unchanged paths, sizes and modification times reuse stored data; on Windows, edits preserving both size and modification time may be missed until a full reread. The first backup of each series on a computer, legacy snapshots without read-policy metadata, and the first backup after seven days reread all source files. Full rereads refresh that series' baseline only after successful verification. Snapshot tags retain the date even when retention removes older versions.
+
+Settings controls the shared read default for manual, CLI and scheduled runs. Select **Reread all source files on the next manual backup** for a one-run override, or pass `backup --read-mode full` in the CLI. `--read-mode incremental` overrides a full-read default while retaining the seven-day reread policy. **Verify Repository** reads stored repository data; it does not reread current source files.
+
+Multi-project runs create pending snapshots first, then verify the repository once before finalizing complete snapshots. Cancellation before verification leaves them pending; earlier verified versions remain available. Retention keeps ten successful versions in each newly successful series, with at most one space-reclaiming prune per run. Failed pruning remains visible and retries after a later successful backup. Global project discovery runs at startup or on request rather than delaying backup execution; source inventories still inspect associated Git data on every run.
 
 The packaged CLI is `dist/RepoBackup/RepoBackup.Cli.exe`. From the repository root:
 

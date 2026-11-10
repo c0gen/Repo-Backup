@@ -82,7 +82,7 @@ public static class DiscoveryTests
 
         await tests.Run("Workspace file URIs decode drive colons, Unicode and UNC shares", () =>
         {
-            Assert(WorkspaceFileReader.LocalPath("file:///c%3A/Projects/My%20Project/%E9%9B%AA") == "c:\\Projects\\My Project\\雪", "Encoded file URI was not decoded.");
+            Assert(WorkspaceFileReader.LocalPath("file:///c%3A/Projects/My%20Project/%E9%9B%AA") == "C:\\Projects\\My Project\\雪", "Encoded file URI was not decoded into its canonical drive path.");
             Assert(WorkspaceFileReader.LocalPath("file://server/share/project") == "\\\\server\\share\\project", "UNC URI was not decoded.");
             Assert(WorkspaceFileReader.LocalPath("file://localhost/C:/Projects/100%2520percent") == "C:\\Projects\\100%20percent", "File URI was decoded more than once.");
             Assert(WorkspaceFileReader.LocalPath("file:///home/project") is null, "Non-Windows path interpreted locally.");

@@ -36,7 +36,7 @@ public static class BackupTests
             }
             else
             {
-                await Throws<InvalidOperationException>(() => app.Backups.AddDestinationAsync("Wrong mode", destination.Path, "a-deliberately-invalid-recovery-key", openExisting: true));
+                await Throws<IOException>(() => app.Backups.AddDestinationAsync("Wrong mode", destination.Path, "a-deliberately-invalid-recovery-key", openExisting: true));
                 Assert(!app.Credentials.Exists(destination.Id), "Password-free repository generated a credential.");
             }
             var reconnected = await app.Backups.AddDestinationAsync(destination.Name, destination.Path, key, openExisting: true, protection: protection);

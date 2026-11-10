@@ -31,6 +31,22 @@ public static class EdgeCaseTests
             var files = await app.Restic.FilesAsync(destination, snapshot.Id);
             Assert(files.Single(f => f.Path == PathSafety.SnapshotPath(junction)).Type == "symlink" && !files.Any(f => f.Path.EndsWith("external-only.txt")), "Restic followed the junction.");
         });
+        await tests.Run("Symbolic-link restore prerequisites are checked before transferring project files", async () =>
+        {
+            var snapshot = (await app.Restic.SnapshotSummariesAsync(destination)).Single();
+            var target = Path.Combine(root, "link-restore");
+            try
+            {
+                await app.Restore.RestoreAsync(destination, snapshot, target);
+                Assert(File.Exists(Path.Combine(target, "RESTORED.txt")), "Privileged restore did not finish.");
+            }
+            catch (IOException e) when (e.Message.Contains("Windows cannot recreate symbolic links"))
+            {
+                Assert(e.Message.Contains("external-link") && File.Exists(Path.Combine(target, "RESTORE-INCOMPLETE.txt")), e.ToString());
+                Assert(!Directory.Exists(Path.Combine(target, "sources")), "Project files were transferred before checking link privileges.");
+            }
+            Assert(!Directory.EnumerateDirectories(target, ".link-probe-*").Any(), "Recovery retained its privilege probe.");
+        });
         await tests.Run("Insufficient-space rejection preserves existing snapshots and records a failed run", async () =>
         {
             var before = (await app.Restic.SnapshotsAsync(destination)).Select(s => s.Id).ToArray();

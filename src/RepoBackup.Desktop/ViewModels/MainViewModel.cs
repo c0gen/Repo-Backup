@@ -23,8 +23,10 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<SelectionOption> Selections { get; } = [];
     public ObservableCollection<SelectionOption> ScheduleScopes { get; } = [];
     public ObservableCollection<SourceNode> SourceTree { get; } = [];
-    public ObservableCollection<SnapshotItem> Snapshots { get; } = [];
-    public ObservableCollection<SnapshotFileItem> SnapshotFiles { get; } = [];
+    private readonly DesktopOperationCoordinator operations = new();
+    public SnapshotBrowserViewModel Browser { get; }
+    public ObservableCollection<SnapshotItem> Snapshots => Browser.Snapshots;
+    public ObservableCollection<SnapshotFileItem> SnapshotFiles => Browser.Files;
     public ObservableCollection<JobRecord> Activity { get; } = [];
     public ObservableCollection<ScheduleDefinition> Schedules { get; } = [];
     public ICollectionView ProjectView { get; }
@@ -34,7 +36,7 @@ public sealed partial class MainViewModel : ObservableObject
     public ScheduleKind[] ScheduleKinds { get; } = Enum.GetValues<ScheduleKind>();
     public DayOfWeek[] ScheduleDays { get; } = Enum.GetValues<DayOfWeek>();
     private string section = "Projects";
-    public string Section { get => section; set { if (Set(ref section, value)) { Raise(nameof(IsProjects)); Raise(nameof(IsDiscoveries)); Raise(nameof(IsSnapshots)); Raise(nameof(IsDestinations)); Raise(nameof(IsActivity)); Raise(nameof(IsSettings)); if (IsSnapshots && SelectedDestination is not null) _ = RefreshSnapshotsAsync(); if (IsSettings) _ = RefreshSchedulesAsync(); } } }
+    public string Section { get => section; set { if (Set(ref section, value)) { Raise(nameof(IsProjects)); Raise(nameof(IsDiscoveries)); Raise(nameof(IsSnapshots)); Raise(nameof(IsDestinations)); Raise(nameof(IsActivity)); Raise(nameof(IsSettings)); if (IsSnapshots && SelectedDestination is not null) _ = Browser.ActivateAsync(); if (IsSettings && !ScheduleLoad.HasLoaded) _ = RefreshSchedulesAsync(); if (IsProjects) _ = UpdatePreviewAsync(); else PreviewLoad.Cancel(); } } }
     public bool IsProjects => Section == "Projects";
     public bool IsDiscoveries => Section == "Discoveries";
     public bool IsSnapshots => Section == "Snapshots & Restore";
@@ -52,8 +54,7 @@ public sealed partial class MainViewModel : ObservableObject
     public string DiscoverySearch { get => discoverySearch; set { if (Set(ref discoverySearch, value)) { DiscoveryView.Refresh(); RaiseLoadProperties(); } } }
     private string filter = "All projects";
     public string ProjectFilter { get => filter; set { if (Set(ref filter, value)) RefreshProjectView(); } }
-    private string fileSearch = "";
-    public string FileSearch { get => fileSearch; set { if (Set(ref fileSearch, value)) { FileView.Refresh(); RaiseLoadProperties(); } } }
+    public string FileSearch { get => Browser.Search; set => Browser.Search = value; }
     private ProjectItem? selectedProject;
     public ProjectItem? SelectedProject { get => selectedProject; set { if (Set(ref selectedProject, value)) { if (ActiveSelection?.Selection is { } s && s.ProjectId != value?.Id) ActiveSelection = Selections.FirstOrDefault(); if (!applyingCatalog) _ = UpdatePreviewAsync(); Raise(nameof(PreviewTitle)); } } }
     private Destination? selectedDestination;
@@ -69,9 +70,8 @@ public sealed partial class MainViewModel : ObservableObject
         var identity = DestinationIdentity;
         if (browserDestinationId == identity) return;
         browserDestinationId = identity;
-        SnapshotsLoad.Cancel(); SnapshotFilesLoad.Cancel();
-        Snapshots.Clear(); SelectedSnapshot = null; SnapshotFiles.Clear(); SelectedSnapshotFile = null;
-        if (IsSnapshots && IsIdle) _ = RefreshSnapshotsAsync();
+        Browser.SetDestination(SelectedDestination);
+        if (IsSnapshots && IsIdle) _ = Browser.ActivateAsync();
     }
     private string DestinationIdentity => SelectedDestination is { } d ? d.Id + "|" + d.Path + "|" + d.RepositoryId : "";
     private void RefreshProtection()
@@ -99,7 +99,8 @@ public sealed partial class MainViewModel : ObservableObject
     private Preview? preview;
     public string PreviewFiles => preview is null ? "—" : preview.FileCount.ToString("N0");
     public string PreviewSize => preview is null ? "—" : FormatBytes(preview.Bytes);
-    public string PreviewWarnings => preview is null ? "" : string.Join("\n", preview.Warnings);
+    public string PreviewWarnings => preview is null ? "" : string.Join("\n", preview.Warnings.Where(w => !preview.Issues.Any(i => i.Message == w))
+        .Concat(preview.Issues.Select(i => (i.Severity == BackupIssueSeverity.Advisory ? "Advisory: " : "Coverage: ") + i.Message)).Distinct());
     public bool HasPreviewWarnings => !string.IsNullOrEmpty(PreviewWarnings);
     public string ExclusionDetails => string.Join("  ·  ", (ActiveSelection?.Selection?.Exclusions ?? SelectedProject?.Project.Exclusions ?? new()).ExcludedDirectories);
     public string ExclusionText
@@ -113,8 +114,10 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
     public int SelectedCount => Projects.Count(p => p.IsSelected);
-    public string SelectedSummary => $"{SelectedCount} selected · {Projects.Count(p => p.IsSelected && !ProjectView.Cast<ProjectItem>().Contains(p))} hidden by filters";
-    public string SelectedBackupLabel => ActiveSelection?.Selection is { } selection ? "Back Up “" + selection.Name + "”" : $"Back Up Selected ({SelectedCount})";
+    public string SelectedSummary { get { var visible = ProjectView.Cast<ProjectItem>().Select(p => p.Id).ToHashSet(); return $"{SelectedCount} selected · {Projects.Count(p => p.IsSelected && !visible.Contains(p.Id))} hidden by filters"; } }
+    public string BackupAllLabel => Queue.HasUnfinishedWork ? "Queue All Enabled" : "Back Up All Enabled";
+    public string SelectedBackupLabel => (Queue.HasUnfinishedWork ? "Queue " : "Back Up ")
+        + (ActiveSelection?.Selection is { } selection ? "“" + selection.Name + "”" : $"Selected ({SelectedCount})");
     public string EnabledSummary => $"{Projects.Count(p => p.Enabled)} enabled";
     public int DiscoveryCount => Discoveries.Count;
     public bool HasDiscoveries => DiscoveryCount > 0;
@@ -126,11 +129,12 @@ public sealed partial class MainViewModel : ObservableObject
     public string LastRunTime => LastRun?.FinishedAt?.LocalDateTime.ToString("MMM d, h:mm tt") ?? "No completed runs yet";
     private JobRecord? selectedActivity;
     public JobRecord? SelectedActivity { get => selectedActivity; set { if (Set(ref selectedActivity, value)) Raise(nameof(ActivityDetail)); } }
-    public string ActivityDetail => SelectedActivity is null ? "Select a run to inspect its result." : string.Join("\n", SelectedActivity.Messages.DefaultIfEmpty("No coverage warnings were reported."));
-    private SnapshotItem? selectedSnapshot;
-    public SnapshotItem? SelectedSnapshot { get => selectedSnapshot; set { if (Set(ref selectedSnapshot, value)) _ = LoadSnapshotFilesAsync(); } }
-    private SnapshotFileItem? selectedSnapshotFile;
-    public SnapshotFileItem? SelectedSnapshotFile { get => selectedSnapshotFile; set { if (Set(ref selectedSnapshotFile, value)) CommandManager.InvalidateRequerySuggested(); } }
+    public string ActivityDetail => SelectedActivity is null ? "Select a run to inspect its result."
+        : (SelectedActivity.ReadMode is { } mode ? "Source reads: " + (mode == BackupReadMode.Full ? "All files" : "Incremental")
+            + (SelectedActivity.LastFullReadAt is { } last ? " · Last full reread: " + last.LocalDateTime.ToString("g") : "") + "\n" : "")
+            + string.Join("\n", SelectedActivity.Messages.DefaultIfEmpty("No coverage warnings were reported."));
+    public SnapshotItem? SelectedSnapshot { get => Browser.SelectedSnapshot; set => Browser.SelectedSnapshot = value; }
+    public SnapshotFileItem? SelectedSnapshotFile { get => Browser.SelectedFile; set => Browser.SelectedFile = value; }
     public ICommand NavigateCommand { get; }
     public ICommand CancelCommand { get; }
     public ICommand ToggleAllCommand { get; }
@@ -140,6 +144,7 @@ public sealed partial class MainViewModel : ObservableObject
     public ICommand ApproveCommand { get; private set; } = null!;
     public ICommand DismissCommand { get; private set; } = null!;
     public ICommand RelinkCommand { get; private set; } = null!;
+    public ICommand ResolveDuplicatesCommand { get; private set; } = null!;
     public ICommand SaveSelectionCommand { get; private set; } = null!;
     public ICommand EditExclusionsCommand { get; private set; } = null!;
     public ICommand BackupSelectedCommand { get; private set; } = null!;
@@ -160,16 +165,21 @@ public sealed partial class MainViewModel : ObservableObject
     public ICommand SaveScheduleCommand { get; private set; } = null!;
     public ICommand DeleteScheduleCommand { get; private set; } = null!;
 
-    public MainViewModel(ApplicationServices services, DialogService dialogs, Func<string, long?>? freeSpace = null)
+    public MainViewModel(ApplicationServices services, DialogService dialogs, Func<string, long?>? freeSpace = null,
+        Core.Backup.IBackupQueueBackend? backupBackend = null)
     {
         Services = services; this.dialogs = dialogs; this.freeSpace = freeSpace ?? PathSafety.FreeSpace;
+        Queue = new BackupQueueViewModel(new CoordinatedBackupBackend(backupBackend ?? services.Backups, operations), () => IsIdle && !IsClosing && Setup?.IsOpen != true);
+        Browser = new SnapshotBrowserViewModel(() => Queue.IsQuiescent && IsIdle && !IsClosing);
+        InitializeBrowser();
         ProjectView = CollectionViewSource.GetDefaultView(Projects); ProjectView.Filter = FilterProject;
         DiscoveryView = CollectionViewSource.GetDefaultView(Discoveries); DiscoveryView.Filter = item => ((ProjectItem)item).Matches(DiscoverySearch);
-        FileView = CollectionViewSource.GetDefaultView(SnapshotFiles); FileView.Filter = item => item is SnapshotFileItem file && file.DisplayPath.Contains(FileSearch, StringComparison.OrdinalIgnoreCase);
+        FileView = CollectionViewSource.GetDefaultView(SnapshotFiles);
         NavigateCommand = new RelayCommand(p => Section = (string)p!);
         CancelCommand = new RelayCommand(_ => Cancel(), _ => IsBusy);
         ToggleAllCommand = new RelayCommand(_ => { var visible = ProjectView.Cast<ProjectItem>().ToList(); var select = visible.Any(p => !p.IsSelected); foreach (var p in visible) p.IsSelected = select; });
         Setup = new SetupWizardViewModel(this);
+        InitializeQueue();
         InitializeLoading(); InitializeProjectCommands(); InitializeBackupCommands(); InitializeSnapshotCommands(); InitializeSettingsCommands();
     }
     private bool FilterProject(object item)
@@ -179,6 +189,7 @@ public sealed partial class MainViewModel : ObservableObject
         return ProjectFilter switch { "Enabled" => p.Enabled, "Needs backup" => p.NeedsBackup, "Unavailable" => !p.Available, _ => true };
     }
     private AsyncCommand Command(Func<Task> action, Func<bool>? available = null) => new(action, dialogs.Error, () => CanEditCatalog && (available?.Invoke() ?? true));
+    private AsyncCommand ExclusiveCommand(Func<Task> action, Func<bool>? available = null) => new(action, dialogs.Error, () => CanEditCatalog && Queue.IsQuiescent && (available?.Invoke() ?? true));
     public async Task InitializeAsync(bool discover = true, bool showSetup = true)
     {
         await ReloadCatalogAsync();

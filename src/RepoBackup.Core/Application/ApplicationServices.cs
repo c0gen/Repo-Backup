@@ -23,6 +23,7 @@ public sealed class ApplicationServices
         IEnumerable<IProjectDiscoveryProvider>? discoveryProviders = null, DiscoveryOptions? discoveryOptions = null)
     {
         Paths = new(dataDirectory); Catalog = new(Paths); Credentials = new(Paths);
+        BackupStaging.Sweep(Paths, Catalog.History(), Catalog.SaveJob);
         var processes = new ProcessRunner(); var git = new GitInspector(processes);
         var providers = discoveryProviders ?? ProjectDiscoveryService.CreateProviders(discoveryOptions ?? (codexStatePath is null
             ? Catalog.GetSetting<DiscoveryOptions>("discoveryOptions") ?? new DiscoveryOptions()

@@ -185,7 +185,7 @@ public static class DesktopRestoreProgressTests
         var model = Model(root, out dialogs); dialogs.FolderPath = root;
         Project(model, root, "Project", approved: true); Destination(model, root);
         var snapshot = new SnapshotInfo(new string('a', 64), DateTimeOffset.UtcNow, ["successful"], []);
-        model.SnapshotLoader = (_, _) => Task.FromResult(new List<SnapshotInfo> { snapshot });
+        model.SnapshotLoader = (_, _) => Task.FromResult(new List<SnapshotSummary> { snapshot });
         return LoadAsync();
         async Task<MainViewModel> LoadAsync()
         {

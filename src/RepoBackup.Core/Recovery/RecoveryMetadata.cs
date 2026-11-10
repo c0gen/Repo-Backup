@@ -5,7 +5,7 @@ namespace RepoBackup.Core.Recovery;
 
 public static class RecoveryMetadata
 {
-    public static void Validate(RecoveryManifest manifest, SnapshotInfo snapshot)
+    public static void Validate(RecoveryManifest manifest, SnapshotSummary snapshot)
     {
         if (manifest.Project is not { } project || string.IsNullOrWhiteSpace(project.Id) || project.Roots is not { Count: > 0 } ||
             project.Roots.Any(r => r is null || string.IsNullOrWhiteSpace(r.Id)) ||

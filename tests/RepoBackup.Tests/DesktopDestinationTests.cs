@@ -16,7 +16,7 @@ namespace RepoBackup.Tests;
 
 public static class DesktopDestinationTests
 {
-    public static Task RunAsync(TestRunner tests, string root) => OnStaAsync(async () =>
+    public static Task RunAsync(TestRunner tests, string root, bool queueOnly = false) => OnStaAsync(async () =>
     {
         var application = new System.Windows.Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/RepoBackup;component/Themes/Dark.xaml", UriKind.Relative) });
@@ -27,6 +27,16 @@ public static class DesktopDestinationTests
         PresentationTraceSources.DataBindingSource.Switch.Level = SourceLevels.Error;
         try
         {
+            if (queueOnly)
+            {
+                await DesktopBackupQueueTests.RunAsync(tests, Path.Combine(root, "backup-queue"));
+                await tests.Run("Queue desktop rendering has no binding errors", () =>
+                {
+                    listener.Flush(); Assert(bindingErrors.ToString().Length == 0, bindingErrors.ToString());
+                    return Task.CompletedTask;
+                });
+                return;
+            }
             await tests.Run("Desktop protected warning can be cancelled without creating a repository", async () =>
             {
                 var warned = 0; var path = Path.Combine(root, "cancelled");
@@ -82,7 +92,10 @@ public static class DesktopDestinationTests
             await DesktopSetupTests.RunAsync(tests, Path.Combine(root, "setup"));
             await DesktopLoadingTests.RunAsync(tests, Path.Combine(root, "loading"));
             await DesktopWorkflowRegressionTests.RunAsync(tests, Path.Combine(root, "workflow"));
+            await SelectionDesktopRegressionTests.RunAsync(tests, Path.Combine(root, "selection-regressions"));
             await DesktopRestoreProgressTests.RunAsync(tests, Path.Combine(root, "restore-progress"));
+            await DesktopBackupEfficiencyTests.RunAsync(tests, Path.Combine(root, "backup-efficiency"));
+            await DesktopBackupQueueTests.RunAsync(tests, Path.Combine(root, "backup-queue"));
             await tests.Run("Desktop protection switching clears unused key inputs and rendering has no binding errors", () =>
             {
                 var form = Form(Path.Combine(root, "switch-mode"), () => true); SelectProtection(form, DestinationProtection.RecoveryKey);

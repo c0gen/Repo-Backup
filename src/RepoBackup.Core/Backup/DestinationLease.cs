@@ -19,6 +19,7 @@ public sealed class DestinationLease : IDisposable
             return new(local, remote);
         }
         catch (IOException e) { local?.Dispose(); throw new IOException("This destination is unavailable or another operation is already using it.", e); }
+        catch { local?.Dispose(); throw; }
     }
-    public void Dispose() { remote?.Dispose(); local.Dispose(); }
+    public void Dispose() { try { remote?.Dispose(); } finally { local.Dispose(); } }
 }

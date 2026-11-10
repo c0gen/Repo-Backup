@@ -43,7 +43,7 @@ public static class RestoreServiceProgressTests
     {
         public bool Streamed { get; private set; }
         public override Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default,
-            string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
+            string? workingDirectory = null, IReadOnlyDictionary<string, string?>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
         {
             var args = arguments.ToList();
             if (!args.Contains("restore")) return base.RunAsync(executable, args, token, workingDirectory, environment, onOutput, secret, captureOutput);

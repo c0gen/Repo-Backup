@@ -15,13 +15,13 @@ namespace RepoBackup.Tests;
 
 internal static class DesktopTestSupport
 {
-    public static MainViewModel Model(string root, out TestDialogs dialogs)
+    public static MainViewModel Model(string root, out TestDialogs dialogs, Core.Backup.IBackupQueueBackend? backupBackend = null)
     {
         dialogs = new TestDialogs();
-        return new MainViewModel(new ApplicationServices(Path.Combine(root, "catalog"), discoveryProviders: []), dialogs, _ => 128L * 1024 * 1024 * 1024)
+        return new MainViewModel(new ApplicationServices(Path.Combine(root, "catalog"), discoveryProviders: []), dialogs, _ => 128L * 1024 * 1024 * 1024, backupBackend)
         {
             PreviewLoader = (_, _, _) => Task.FromResult(Preview()),
-            SnapshotLoader = (_, _) => Task.FromResult(new List<SnapshotInfo>()),
+            SnapshotLoader = (_, _) => Task.FromResult(new List<SnapshotSummary>()),
             SnapshotFileLoader = (_, _, _) => Task.FromResult(new List<SnapshotFileItem>())
         };
     }
@@ -79,6 +79,9 @@ internal static class DesktopTestSupport
         public string? FolderPath { get; set; }
         public string? SavePath { get; set; }
         public int SaveCalls { get; private set; }
+        public bool ConfirmResult { get; set; }
+        public int ConfirmCalls { get; private set; }
+        public override bool Confirm(string message) { ConfirmCalls++; return ConfirmResult; }
         public override string? Folder(string title) => FolderPath;
         public override string? Save(string title, string filename, string filter) { SaveCalls++; return SavePath; }
         public override void Error(Exception error) => Errors.Add(error);

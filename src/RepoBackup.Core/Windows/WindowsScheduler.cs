@@ -31,14 +31,14 @@ public sealed class WindowsScheduler(AppPaths paths, CatalogStore catalog, Proce
             new XElement(ns + "Triggers", trigger),
             new XElement(ns + "Principals", new XElement(ns + "Principal", new XAttribute("id", "Author"), new XElement(ns + "UserId", userSid), new XElement(ns + "LogonType", "InteractiveToken"), new XElement(ns + "RunLevel", "LeastPrivilege"))),
             new XElement(ns + "Settings", new XElement(ns + "MultipleInstancesPolicy", "IgnoreNew"), new XElement(ns + "DisallowStartIfOnBatteries", false), new XElement(ns + "StopIfGoingOnBatteries", false), new XElement(ns + "StartWhenAvailable", true), new XElement(ns + "Enabled", schedule.Enabled), new XElement(ns + "Hidden", true), new XElement(ns + "ExecutionTimeLimit", "PT0S")),
-            new XElement(ns + "Actions", new XAttribute("Context", "Author"), new XElement(ns + "Exec", new XElement(ns + "Command", runner), new XElement(ns + "Arguments", $"--data-dir \"{dataDirectory}\" run-schedule --id {schedule.Id}"), new XElement(ns + "WorkingDirectory", Path.GetDirectoryName(runner)))));
+            new XElement(ns + "Actions", new XAttribute("Context", "Author"), new XElement(ns + "Exec", new XElement(ns + "Command", runner), new XElement(ns + "Arguments", WindowsCommandLine.Join(["--data-dir", dataDirectory, "run-schedule", "--id", schedule.Id])), new XElement(ns + "WorkingDirectory", Path.GetDirectoryName(runner)))));
         return new XDocument(new XDeclaration("1.0", "utf-16", null), task).ToString();
     }
     public async Task SaveAsync(ScheduleDefinition schedule, CancellationToken token = default)
     {
         if (!Guid.TryParse(schedule.Id, out _) || !Enum.IsDefined(schedule.Kind)) throw new ArgumentException("Invalid schedule identity or frequency.");
+        if (catalog.Destinations().All(d => d.Id != schedule.DestinationId || d.IsRetired)) throw new ArgumentException("Choose an active saved destination. Reassign schedules for replaced repositories.");
         if (!File.Exists(EffectiveRunnerPath)) throw new FileNotFoundException("Install the packaged app first. Scheduling requires its stable per-user runner path.", EffectiveRunnerPath);
-        if (catalog.Destinations().All(d => d.Id != schedule.DestinationId)) throw new ArgumentException("Choose a saved destination.");
         if (schedule.SelectionId is not null && catalog.Selections().All(s => s.Id != schedule.SelectionId)) throw new ArgumentException("Saved selection no longer exists.");
         var xmlPath = Path.Combine(paths.DataDirectory, "schedule-" + schedule.Id + ".xml");
         await File.WriteAllTextAsync(xmlPath, BuildXml(schedule, EffectiveRunnerPath, paths.DataDirectory, WindowsIdentity.GetCurrent().User!.Value), System.Text.Encoding.Unicode, token);
@@ -64,5 +64,24 @@ public sealed class WindowsScheduler(AppPaths paths, CatalogStore catalog, Proce
         }
         catalog.SaveSchedules(catalog.Schedules().Where(s => s.Id != id).ToList());
         return Task.CompletedTask;
+    }
+
+    public static void DisableTaskIfPresent(string id)
+    {
+        if (!Guid.TryParse(id, out _)) throw new ArgumentException("Invalid schedule identity.");
+        dynamic service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service")!)!;
+        object? folder = null; object? task = null;
+        try
+        {
+            service.Connect(); folder = service.GetFolder("\\");
+            try { task = ((dynamic)folder).GetTask("RepoBackup-" + id); ((dynamic)task).Enabled = false; }
+            catch (Exception e) when (e is System.Runtime.InteropServices.COMException or FileNotFoundException && e.HResult == unchecked((int)0x80070002)) { }
+        }
+        finally
+        {
+            if (task is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(task);
+            if (folder is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(folder);
+            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(service);
+        }
     }
 }

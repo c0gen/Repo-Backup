@@ -3,6 +3,8 @@ using System.Windows.Controls;
 namespace RepoBackup.Desktop.Views;
 
 public partial class OperationStatus : UserControl { public OperationStatus() { InitializeComponent(); } }
+public partial class BackupQueueStatus : UserControl { public BackupQueueStatus() => InitializeComponent(); }
+public partial class BackupQueuePanel : UserControl { public BackupQueuePanel() => InitializeComponent(); }
 
 public partial class ProjectsPage : UserControl { public ProjectsPage() => InitializeComponent(); }
 public partial class DiscoveriesPage : UserControl { public DiscoveriesPage() => InitializeComponent(); }

@@ -30,7 +30,7 @@ public sealed class SetupWizardViewModel : ObservableObject
     public string DiscoveryNextHint => Main.Projects.Any(p => p.Enabled && p.Available) ? "Continue to review your first backup." : "Include at least one available project to continue, or do this later.";
     public string ReviewDestination => Main.SelectedDestination is { } destination ? destination.Name + "\n" + destination.Path : "Choose a destination";
     public string ReviewProtection => Main.SelectedDestination?.Protection == Core.Models.DestinationProtection.RecoveryKey ? "Protected with a recovery key" : "No password required";
-    public bool CanChangeStep => Main.IsIdle && !DestinationLoad.IsLoading && !ProgressLoad.IsLoading && !Main.CatalogLoad.IsLoading;
+    public bool CanChangeStep => Main.IsIdle && Main.Queue.IsQuiescent && !Main.IsClosing && !DestinationLoad.IsLoading && !ProgressLoad.IsLoading && !Main.CatalogLoad.IsLoading;
     public bool CanContinue => CanChangeStep && Main.CatalogLoad.IsReady && Main.HasConfiguredDestination &&
         (Step == 0 || (!Main.DiscoveryLoad.IsLoading && Main.Projects.Any(p => p.Enabled && p.Available)));
     public bool CanUseNextAction => IsDestination && IsCreatingDestination ? CanChangeStep && Main.CatalogLoad.IsReady : CanContinue;
@@ -57,7 +57,7 @@ public sealed class SetupWizardViewModel : ObservableObject
     {
         if (initialized) return;
         var saved = await Task.Run(() => Main.Services.Catalog.GetSetting<SetupProgress>(Setting));
-        progress = saved ?? new SetupProgress(Completed: Main.Destinations.Any(d => d.RepositoryId is not null));
+        progress = saved ?? new SetupProgress(Completed: Main.Destinations.Any(d => !d.IsRetired && d.RepositoryId is not null));
         initialized = true;
         if (autoShow && !progress.Presented && !progress.Completed) await OpenAsync();
         Refresh();

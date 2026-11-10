@@ -7,6 +7,13 @@ namespace RepoBackup.Desktop.ViewModels;
 public sealed partial class MainViewModel
 {
     private bool useVss;
+    private bool incrementalBackups = true, rereadAllSourceFiles;
+    public bool IncrementalBackups
+    {
+        get => incrementalBackups;
+        set { if (Set(ref incrementalBackups, value)) Services.Catalog.SaveSetting(Core.Backup.BackupReadPolicy.Setting, value ? BackupReadMode.Incremental : BackupReadMode.Full); }
+    }
+    public bool RereadAllSourceFiles { get => rereadAllSourceFiles; set => Set(ref rereadAllSourceFiles, value); }
     public bool UseVss { get => useVss; set { if (Set(ref useVss, value)) Services.Catalog.SaveSetting("useVss", value); } }
     public ScheduleEditorState ScheduleEditor { get; } = new();
     public Destination? SelectedScheduleDestination
@@ -67,7 +74,7 @@ public sealed partial class MainViewModel
                 await Task.Run(() => Services.Scheduler.SaveAsync(schedule, token), token); ScheduleEditor.Saved(schedule);
                 StatusMessage = schedule.Enabled ? "Schedule saved. Backups can run while the GUI is closed." : "Schedule saved disabled.";
             });
-        }, () => CanEditSchedule && ScheduleEditor.DestinationId is not null);
+        }, () => CanEditSchedule && ScheduleDestinations.Any(d => d.Id == ScheduleEditor.DestinationId));
         DeleteScheduleCommand = Command(async () =>
         {
             var id = SelectedSchedule!.Id;

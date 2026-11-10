@@ -66,13 +66,13 @@ public static class ReliabilityRegressionTests
                 Assert(files.Length == 1 && Path.GetFileName(files[0]) == "note[1].txt" && await Fixture.HashAsync(files[0]) == await Fixture.HashAsync(requested), "Saved selection restored the wrong file.");
             }
         });
-        await tests.Run("Cancellation between projects returns a terminal result for every request", async () =>
+        await tests.Run("Cancellation between projects leaves unverified snapshots pending and returns every request", async () =>
         {
             var otherPath = Path.Combine(root, "other"); Directory.CreateDirectory(otherPath); await File.WriteAllTextAsync(Path.Combine(otherPath, "file.txt"), "Other project");
             var other = app.Catalog.RegisterCandidate("Other", [otherPath], "Manual", approved: true);
             using var cancelled = new CancellationTokenSource();
-            var jobs = await app.Backups.RunAsync(destination, [project, other], progress: new ImmediateProgress(p => { if (p.Stage == "Successful") cancelled.Cancel(); }), token: cancelled.Token);
-            Assert(jobs.Count == 2 && RunOutcome.IsSuccessful(jobs[0]) && jobs[1].Backup == Outcome.Cancelled && jobs.All(j => j.FinishedAt is not null) && RunOutcome.ExitCode(jobs) == 130, Json.Write(jobs));
+            var jobs = await app.Backups.RunAsync(destination, [project, other], progress: new ImmediateProgress(p => { if (p.Stage == "Awaiting verification") cancelled.Cancel(); }), token: cancelled.Token);
+            Assert(jobs.Count == 2 && jobs.All(j => j.Backup == Outcome.Cancelled) && jobs.All(j => j.FinishedAt is not null) && RunOutcome.ExitCode(jobs) == 130, Json.Write(jobs));
             Assert(app.Catalog.History().Any(j => j.Id == jobs[1].Id), "Not-started cancellation was omitted from history.");
         });
         await tests.Run("Cancellation during snapshot finalization preserves verification but cannot claim success", async () =>
@@ -154,7 +154,7 @@ public static class ReliabilityRegressionTests
     private sealed class ImmediateProgress(Action<BackupProgress> action) : IProgress<BackupProgress> { public void Report(BackupProgress value) => action(value); }
     private sealed class OverrideRunner(Func<List<string>, ProcessResult?> intercept) : ProcessRunner
     {
-        public override Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
+        public override Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default, string? workingDirectory = null, IReadOnlyDictionary<string, string?>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
         {
             var args = arguments.ToList(); var result = intercept(args);
             return result is null ? base.RunAsync(executable, args, token, workingDirectory, environment, onOutput, secret, captureOutput) : Task.FromResult(result);
@@ -162,7 +162,7 @@ public static class ReliabilityRegressionTests
     }
     private sealed class TagFailureRunner : ProcessRunner
     {
-        public override Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
+        public override Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token = default, string? workingDirectory = null, IReadOnlyDictionary<string, string?>? environment = null, Action<string>? onOutput = null, string? secret = null, bool captureOutput = true)
         {
             var args = arguments.ToList();
             return args.Contains("tag") ? Task.FromResult(new ProcessResult(1, "", "Injected tag failure")) : base.RunAsync(executable, args, token, workingDirectory, environment, onOutput, secret, captureOutput);

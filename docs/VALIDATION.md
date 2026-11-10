@@ -4,15 +4,46 @@ The application is built on Windows with the pinned .NET SDK and restic release.
 
 ## Reproduce
 
+Use `--backup-only` to rerun the complete backup/restore acceptance fixtures, including repository identity mismatch and lock release, in both destination protection modes.
+
+Use `--efficiency-only` for incremental/full-read policy, batch verification and retention, cancellation/tag reconciliation, CLI defaults, and safe staging cleanup in both protection modes. `--backup-benchmark <absolute-new-fixture-directory>` generates 10,000 small files, a 512 MiB static asset, and twenty independent retention series, then writes repeated-run timing, parent-process peak memory and staging usage to `measurements.jsonl`. Run baseline and revised binaries in separate fixture directories on the same storage. Timing is observational, not a test threshold; parent-process memory excludes restic's own memory.
+
+Alternatively, after the baseline finishes, use `--backup-benchmark-continue <baseline-fixture-directory>` with the revised binary to reuse its populated repository and source paths. This performs one warmup per scenario and writes three repeat measurements to `measurements-after.jsonl`, avoiding another ten runs solely to populate retention. Do not run both binaries against the same fixture concurrently.
+
+Local synthetic measurements on 2026-10-15 (median of three repeat runs):
+
+| Scenario | Before | After |
+| --- | ---: | ---: |
+| 20-project run with retention | 129.03 s | 44.42 s |
+| 10,000 files plus a 512 MiB static asset | 9.94 s | 10.42 s |
+
+The batch improved by about 66%; the single-project result was approximately unchanged (about 5% slower in this sample). The revised runs left zero staging bytes, versus 3.42 MB accumulated across the baseline benchmark. These observations use one local destination and a repository populated by the baseline, with other validation running on the machine; they are not isolated hardware benchmarks. Parent-process peak memory is recorded in the JSONL output but excludes restic and is not directly comparable across the different numbers of warmup runs. Process I/O counters were not collected; incremental command/parent behavior and restored hashes are checked separately by the acceptance tests.
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Verify.ps1 -Package
 ```
 
 Use `--unit` on the test executable for catalog, discovery, CLI and native hook checks. Use `--edge-only` for those checks plus link, low-space, live-change and external Git-data tests. Build the whole solution first so the CLI and hidden runner fixtures are available. Junction creation requires an environment permitting Windows reparse points.
 
+Use `--wsl-only` for native WSL v1/v2 link capture, validation, and real restic backup/restore tests in both destination protection modes. Fixtures are generated under `.artifacts`; WSL does not need to be installed. These checks cover selective and link-only restores, fresh-catalog recovery, linked Git worktrees, unchanged-timestamp retargeting, malformed metadata, collisions, and reparse ancestors. Restore permission and unsupported-filesystem failures are injected at the native link-creation boundary; actual VSS and alternate-filesystem behavior require their respective environments.
+
+Use `--wsl-native-only` for the fast native link, selection, and manifest checks without running restic repositories.
+
+Use `--audit-only` for the eight-issue regression group and desktop checks: inherited Git environment isolation, nested Git databases, filtered/empty source recovery, project-relative and legacy selection rules, unresolved selection-tree entries, permission-failure lease release, repository replacements, and native Windows argument parsing. The group also restores real version 1/2 snapshots and checks version 3 fresh-catalog recovery in both protection modes. The full suite includes these checks; `--windows-integration` additionally runs actual tasks using Unicode catalog paths with trailing separators and verifies repository replacement disables those tasks.
+
 Use `--destinations-only` for desktop workflow, protection/export, and core/CLI destination checks without repeating the full backup and retention suites. Combine it with `--windows-integration` to include temporary schedule creation, repeated editing, and missing-task removal. Use `--reliability-only` for exact restore, cancellation/finalization, moved-root recovery, and reactivation regressions.
 
 `Verify.ps1` includes redacted secret scanning, live transitive NuGet auditing, negative security-gate fixtures, the full acceptance suite, and restic 0.18.0 repository compatibility checks. `-Package` builds and tests the portable ZIP; use `-Installer` on a clean Windows machine to also build and test setup, reinstall, uninstall, and preserved user data. Direct `Build.ps1` and `Test-Package.ps1` commands remain available for focused checks. See [Security maintenance](SECURITY.md) and [Packaging and releases](PACKAGING.md).
+
+## Eight-issue fix validation: October 14, 2026
+
+The final Release build completed with **zero warnings and zero errors**. The consolidated suite with `--windows-integration` completed with **223 passed, 0 failed**. The final destination/UI run completed with **51 passed, 0 failed**. Tests used generated data; native fixture tasks were removed after execution.
+
+The regressions cover inherited Git environment overrides, nested Git metadata inside excluded directories, empty and filtered source folders, project-relative selection rules and legacy semantics, unresolved selection-tree paths, immediate retry after lock permission failures, separate replacement-repository identities and retained keys/history, and Windows argument parsing. Actual scheduled backups used Unicode catalog paths ending in a separator; repository replacement disabled both catalog schedules and their Windows tasks. Version 1/2 snapshots, version 1/2 catalog compatibility and rollback, version 3 fresh-catalog recovery, source hashes, and both protection modes passed.
+
+Selection errors, pattern-base conversion, retired destinations and disabled schedule drafts rendered at the minimum window size and 150% scale. Portable smoke tests passed under Windows PowerShell and PowerShell 7 using the bundled runtime, Git, Git LFS and restic, including linked-worktree/LFS backup and restore, the hidden runner and WPF rendering. The smoke fixture clears environment variables with an explicit null value so PowerShell 7 cannot turn them into invalid empty Git paths.
+
+Full log: `.artifacts/eight-fixes-verified.log`. Full-run artifacts: `.artifacts/tests/20261014-214941-aafba1/`. Focused UI log: `.artifacts/eight-fixes-ui-final.log`; UI artifacts: `.artifacts/tests/20261014-214641-0bb663/`. Portable logs: `.artifacts/eight-fixes-package-verified-ps5.log` and `.artifacts/eight-fixes-package-verified-ps7.log`. Hardware-only VSS, live UNC and removable-drive checks remain separate.
 
 ## Acceptance coverage
 
@@ -75,3 +106,46 @@ Real restores in both protection modes reported cumulative progress and latest-f
 All desktop restore commands passed controlled progress, cancellation, failure, worker/UI thread ownership, burst coalescing, and stale-callback checks. The progress area rendered at 1140×730 and 1500×960, with 100% and 150% rendering scale, without clipped controls or binding errors. Long filenames were shortened visually while retaining their full-path tooltip.
 
 Artifacts: `.artifacts/tests/20261006-212522-947905/`. Full run log: `.artifacts/restore-progress-acceptance.log`. Progress-area PNGs are under `desktop-destinations/restore-progress/` in the artifact directory.
+
+## Background backup queue validation: October 15, 2026
+
+The Release build completed with **zero warnings and zero errors**. The full acceptance suite with `--windows-integration` completed with **269 passed, 0 failed**. The final queue/UI source changes also passed an isolated `--queue-only` run with **22 passed, 0 failed**. Tests ran outside the filesystem sandbox for temporary junction and Windows Task Scheduler fixtures; fixture tasks were removed afterward.
+
+Queue checks covered FIFO execution, enqueueing during active work, duplicate suppression, defensive configuration copies, waiting-entry movement/removal, pause/resume, failure continuation, cancellation ownership, cancel-all during shared verification, and concurrent enqueue/completion. Real backups in both protection modes verified that full projects and saved selections share destination maintenance, preserve captured exclusions, release leases, and never finalize cancelled unverified snapshots. Source-inventory and JSON telemetry checks covered bounded callbacks, cancellation, counters, malformed messages, zero-byte files, Unicode paths, and hidden staging paths.
+
+Desktop checks proved that backup execution stays off the UI thread while navigation, project selection, search, and enqueueing remain usable. Progress coalescing, stale reporters, deferred snapshot selection, and graceful closing with active or paused requests passed. Queue/progress controls rendered at 1140×730 and 1500×960, with 100% and 150% rendering scale, keyboard access, full-path tooltips, and no binding errors or clipped controls. Existing restore progress, recovery, retention, interruption, and headless scheduled-runner scenarios passed.
+
+Full artifacts: `.artifacts/tests/20261015-164645-fbd1e7/`. Final queue/UI artifacts: `.artifacts/tests/20261015-165541-ad7648/`, with PNGs under `desktop-destinations/backup-queue/`. Logs: `.artifacts/backup-queue-acceptance.log` and `.artifacts/backup-queue-final-targeted.log`. The desktop queue is in memory; this feature adds no catalog or recovery-manifest migration and preserves CLI and scheduled backup interfaces.
+
+
+## Backup blocker and recovery validation: October 15–16, 2026
+
+The Release build completed with zero warnings and zero errors. The full acceptance suite with --windows-integration completed with **326 passed, 0 failed**. Blocker regressions cover complete NUL-delimited Git records, stale foreign versus locked unavailable worktrees, moved common repositories, ambiguous pointers, isolated worktree/submodule/alternate errors, tracked files beneath exclusions in full backups and saved selections, version 1–3 Git reconstruction, orphan metadata and commit preservation, unchanged original Git files, canonical drive/UNC/long paths, migration backup and rollback, portable aliases and selections, moved-root catalog rebuilding, alias retention boundaries, structured coverage issues, and bounded change samples. Follow-up fixtures also passed a real backup/restore of tracked paths beyond 260 characters with local Git longpaths disabled, and six version 1–3 full/selective recovery checks using lowercase drive letters. Git commands explicitly enable long-file handling; canonical identities remain independent of native path prefixes. The source/legacy/desktop audit passed **53 checks**, including full and selective recovery from version 1–3 extended Windows source mappings.
+
+A generated five-million-path JSON snapshot stream passed with less than 64 MiB of peak additional managed memory. Summary parsing cancellation and native process cleanup passed. The explicit full-path snapshot API remains available. Live NuGet auditing, Git-history/current-source secret scans, checksum/lock/secret/audit negative gates, and restic 0.18.0-to-0.19.1 protected/password-free recovery compatibility passed.
+
+The self-contained portable package smoke passed with system Git/.NET discovery disabled, including linked-worktree and local LFS backup/restore, the hidden runner, and WPF startup. An installer was built; installation/uninstallation smoke is reserved for a clean Windows runner because this computer has an existing installation.
+
+A SQLite backup of the real catalog was migrated in an isolated validation directory: **266 projects became 180**, preserving **85 legacy project identities**, absorbing the unused 3D Models subset, and leaving no settings conflicts. The original catalog and installed application were not changed. The five absent configured source entries remain enabled, per the user's decision; no candidate paths were substituted.
+
+Fresh full-project backups of **pokemon-blue** (293,999 files; 87,898,391,014 bytes; snapshot 947d1542c9786ad30a15a3720691af49fdd451c17e91b0c8f3f6c37cb7a4408c) and **RFNM_Spectrum_Suite-v2** (430,780 files; 28,078,962,950 bytes; snapshot dc833e1b733d0b555344d86d2246870a79631fbce501adc6a2ec212a0878ada2) completed with successful backup, verification, and cleanup outcomes. Both inventories were stable across transfer. Pokemon reported 23 stale-registration advisories and no coverage errors; RFNM reported no issues. **Full verified recovery completed for both projects.** All restored Git HEADs, staged index entries, and tracked working changes matched the unchanged sources across four Pokemon and seven RFNM contexts. The real recoveries used the production recovery components, including the specific continuations described below; they were not uninterrupted clean CLI runs. Logs are under `.artifacts/backup-blockers-*`; large isolated test and restore data is under `G:\RepoBackup-Validation-20261015-8cba6d99`.
+
+
+Ghidra was re-inventoried twice using the new change summary: **790,445 files**, **323,464,374,779 bytes**, no coverage issues, and exactly **one modified file**: `G:\Ghidra\data\services\GhidraLibrary\ext4.vhdx`. Added, removed, and metadata-changed counts were zero. The Windows WSL registration associates this disk with **GhidraLibrary**. A stable live capture requires quiescing that workload; the app's explicit VSS mode remains an alternative subject to its existing administrator and volume requirements. No distribution was stopped and no disk was excluded. This observation identifies a current blocker; the historical incomplete snapshot lacks enough details to prove its original cause. Report: `.artifacts/backup-blockers-ghidra-diagnostic.json`.
+
+
+Four native lock-recovery checks passed: a killed owner with a retained Windows process handle, cancellation while a live owner keeps its lock, streamed-listing parse-state reset after a lock error, and repository-identity validation before lock cleanup. The first fixture reproduces the Windows liveness behavior in [restic 0.19.1's lock implementation](https://github.com/restic/restic/blob/v0.19.1/internal/restic/lock_windows.go). The recovery fallback verifies the lock metadata, same host/account, exited owner, content hash, and repository containment; it never removes all locks. These checks and the long-file fixture are included in the final 326-check acceptance run.
+
+
+Policy regressions additionally verify that an unavailable old metadata volume cannot be assumed to be a relocated repository, in both protection modes. Recovery rejects a worktree whose required relationship was unresolved in the captured graph. A VSS comparison fixture verifies stable exact-file selection: additions, removals, and type changes remain coverage failures while ordinary shadow-copied content edits do not create false change reports.
+
+
+The real Pokemon restore exposed Windows symbolic-link privilege requirements after a large source had already transferred. Recovery now probes link creation on the target volume before transferring project contents, reports an affected snapshot path, and verifies dangling links without following their targets. Three focused checks and the full-suite service integration passed. The user approved Administrator recovery without changing Developer Mode or other Windows settings.
+
+
+RFNM full readback detected one recovery-output mismatch: .git/FETCH_HEAD was 1,391 bytes while its snapshot node recorded 106. The snapshot dump and unchanged source both contained the correct 106 bytes; independent verified single-file restores using the existing and fresh caches also passed. The cause of the output difference was not established. A bounded retry now restores only recognized mismatched regular files into a private directory, verifies them, and atomically replaces the affected output paths. Eleven regression checks passed across both protection modes, including content and size mismatches, repeated failure, unrelated reported paths, literal selection, case collisions, and protection of originals linked from the output. These checks are included in the final 326-check acceptance run. The captured full readback completed with exactly this one mismatch. The production retry verified the replacement bytes, the four remaining sources were restored and verified, and production finalization repaired Git relationships. All seven restored Git contexts matched their sources. Repair provenance is retained in the recovery output.
+
+
+Pokemon's elevated run verified all three native sources and completed Git repair. Final verification then exposed a separate bug: it expected an empty administrative `refs` directory at its old location after the enclosing stale registration was intentionally moved to `git-registration-archive`. Archive-aware verification now validates the registration identity, deterministic archive name, captured-source membership, and containment, and checks empty directories at their preserved locations. The strengthened stale-worktree fixtures include empty `refs` directories in both protection modes. The finalization stage was rerun against the already-verified data; all four Git contexts matched the sources, and all **23 orphan registrations** remain preserved inside the recovery output.
+
+The completed copies are under `G:\RepoBackup-Validation-20261015-8cba6d99\restores`: `pokemon-blue-1b08d41347884edca75eb6dbadd814e5-elevated` and `RFNM_Spectrum_Suite-v2-81583960957341b08ee3b7b660dc8e12`. Both contain `RESTORED.txt` and no `RESTORE-INCOMPLETE.txt`. Combined results and continuation provenance are in `.artifacts/backup-blockers-real-validation.json`. The ordinary Pokemon attempt remains separately marked incomplete; it is not counted as acceptance. The installed application and original live catalog were not upgraded during validation.

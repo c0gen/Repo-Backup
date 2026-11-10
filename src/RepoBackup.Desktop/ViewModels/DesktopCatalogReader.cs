@@ -8,7 +8,10 @@ namespace RepoBackup.Desktop.ViewModels;
 public sealed record DesktopCatalogSnapshot(
     List<ProjectEntry> Projects, List<Destination> Destinations, List<SavedSelection> Selections,
     List<JobRecord> History, List<VerificationRecord> Verifications, HashSet<string> AvailableProjects,
-    string? SelectedDestinationId, bool UseVss, string CodexHook, string ClaudeHook, string AntigravityHook);
+    string? SelectedDestinationId, bool UseVss, string CodexHook, string ClaudeHook, string AntigravityHook)
+{
+    public BackupReadMode BackupReadMode { get; init; }
+}
 
 public sealed record DesktopScheduleSnapshot(List<ScheduleDefinition> Schedules, List<Destination> Destinations, List<SavedSelection> Selections);
 
@@ -29,7 +32,8 @@ public static class DesktopCatalogReader
             catalog.GetSetting<string>("selectedDestination"), catalog.GetSetting<bool>("useVss"),
             DiscoveryHookInstaller.Status(catalog, DiscoveryProviders.Codex),
             DiscoveryHookInstaller.Status(catalog, DiscoveryProviders.ClaudeCode),
-            DiscoveryHookInstaller.Status(catalog, DiscoveryProviders.Antigravity));
+            DiscoveryHookInstaller.Status(catalog, DiscoveryProviders.Antigravity))
+            { BackupReadMode = catalog.GetSetting<BackupReadMode>(Core.Backup.BackupReadPolicy.Setting) };
     }, token);
 
     public static Task<DesktopScheduleSnapshot> ReadSchedulesAsync(ApplicationServices services, CancellationToken token) => Task.Run(() =>

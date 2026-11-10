@@ -11,8 +11,8 @@ public sealed partial class MainViewModel
     public LoadState ScheduleLoad { get; } = new();
     public LoadState DiscoveryLoad { get; } = new();
     public LoadState PreviewLoad { get; } = new();
-    public LoadState SnapshotsLoad { get; } = new();
-    public LoadState SnapshotFilesLoad { get; } = new();
+    public LoadState SnapshotsLoad => Browser.SummariesLoad;
+    public LoadState SnapshotFilesLoad => Browser.FilesLoad;
     private readonly LoadState destinationLoad = new();
     public Func<CancellationToken, Task<DesktopCatalogSnapshot>>? CatalogLoader { get; set; }
     public Func<CancellationToken, Task<DesktopScheduleSnapshot>>? ScheduleLoader { get; set; }
@@ -22,10 +22,11 @@ public sealed partial class MainViewModel
     public ICommand RetrySchedulesCommand { get; private set; } = null!;
     public ICommand RetryPreviewCommand { get; private set; } = null!;
     public ICommand RetrySnapshotFilesCommand { get; private set; } = null!;
-    public bool CanEditCatalog => IsIdle && CatalogLoad.IsReady;
+    public bool CanChooseBackupInputs => IsIdle && !IsClosing && CatalogLoad.IsReady;
+    public bool CanEditCatalog => CanChooseBackupInputs && !catalogSaving;
     public bool CanEditSchedule => CanEditCatalog && ScheduleLoad.IsReady;
-    public bool HasDestinations => Destinations.Count > 0;
-    public bool HasConfiguredDestination => SelectedDestination?.RepositoryId is not null;
+    public bool HasDestinations => Destinations.Any(d => !d.IsRetired);
+    public bool HasConfiguredDestination => SelectedDestination is { IsRetired: false, RepositoryId: not null };
     public bool NeedsDestination => CatalogLoad.IsReady && !HasDestinations;
     public bool ShowProjectsEmpty => CatalogLoad.IsReady && !DiscoveryLoad.IsLoading && ProjectView.IsEmpty;
     public string ProjectsEmptyTitle => Projects.Count == 0 ? "Choose what to protect" : "No matching projects";
@@ -34,6 +35,7 @@ public sealed partial class MainViewModel
     public string DiscoveriesEmptyTitle => Discoveries.Count == 0 ? "No projects waiting for review" : "No matching discoveries";
     public string DiscoveriesEmptyDetail => Discoveries.Count == 0 ? "Refresh discovery, add a folder, or scan for repositories." : "Try another project name, path, or program.";
     public bool ShowSchedulesEmpty => ScheduleLoad.IsReady && Schedules.Count == 0;
+    public bool ScheduleNeedsDestination => ScheduleLoad.IsReady && ScheduleEditor.DestinationId is not null && !ScheduleDestinations.Any(d => d.Id == ScheduleEditor.DestinationId);
     public bool ShowSnapshotsEmpty => SnapshotsLoad.IsReady && Snapshots.Count == 0;
     public bool ShowFilesEmpty => SnapshotFilesLoad.IsReady && FileView.IsEmpty;
     public string FilesEmptyText => SnapshotFiles.Count == 0 ? "No files were found in this recovery point." : "No files match your search.";
@@ -55,15 +57,16 @@ public sealed partial class MainViewModel
         {
             if (e.PropertyName == nameof(ScheduleEditor.DestinationId)) Raise(nameof(SelectedScheduleDestination));
             if (e.PropertyName == nameof(ScheduleEditor.SelectionId)) Raise(nameof(SelectedScheduleScope));
+            Raise(nameof(ScheduleNeedsDestination));
             CommandManager.InvalidateRequerySuggested();
         };
     }
     private void RaiseLoadProperties()
     {
-        foreach (var property in new[] { nameof(CanEditCatalog), nameof(CanEditSchedule), nameof(HasDestinations), nameof(HasConfiguredDestination),
+        foreach (var property in new[] { nameof(CanEditCatalog), nameof(CanChooseBackupInputs), nameof(CanEditSchedule), nameof(HasDestinations), nameof(HasConfiguredDestination),
             nameof(NeedsDestination), nameof(ShowProjectsEmpty), nameof(ProjectsEmptyTitle), nameof(ProjectsEmptyDetail),
             nameof(ShowDiscoveriesEmpty), nameof(DiscoveriesEmptyTitle), nameof(DiscoveriesEmptyDetail), nameof(ShowSchedulesEmpty),
-            nameof(ShowSnapshotsEmpty), nameof(ShowFilesEmpty), nameof(FilesEmptyText), nameof(NeedsSnapshotSelection), nameof(NeedsPreviewSelection), nameof(ScheduleSummary) }) Raise(property);
+            nameof(ShowSnapshotsEmpty), nameof(ShowFilesEmpty), nameof(FilesEmptyText), nameof(NeedsSnapshotSelection), nameof(NeedsPreviewSelection), nameof(ScheduleSummary), nameof(ScheduleNeedsDestination) }) Raise(property);
         Setup?.Refresh();
         CommandManager.InvalidateRequerySuggested();
     }
@@ -102,12 +105,16 @@ public sealed partial class MainViewModel
                 (project.Dismissed ? DismissedProjects : project.Reviewed ? Projects : Discoveries).Add(item);
             }
             Destinations.Clear(); foreach (var destination in data.Destinations) Destinations.Add(destination);
-            SelectedDestination = Destinations.FirstOrDefault(d => d.Id == destinationId) ?? Destinations.FirstOrDefault();
+            SelectedDestination = Destinations.FirstOrDefault(d => d.Id == destinationId && !d.IsRetired) ?? Destinations.FirstOrDefault(d => !d.IsRetired) ?? Destinations.FirstOrDefault();
             Selections.Clear(); Selections.Add(new("Full projects", null));
             foreach (var selection in data.Selections) Selections.Add(new(selection.Name, selection));
             activeSelection = Selections.FirstOrDefault(s => s.Selection?.Id == selectionId) ?? Selections[0]; Raise(nameof(ActiveSelection));
             SelectedProject = Projects.FirstOrDefault(p => p.Id == currentId) ?? Projects.FirstOrDefault();
-            if (!settingsLoaded) { useVss = data.UseVss; Raise(nameof(UseVss)); settingsLoaded = true; }
+            if (!settingsLoaded)
+            {
+                useVss = data.UseVss; incrementalBackups = data.BackupReadMode == BackupReadMode.Incremental;
+                Raise(nameof(UseVss)); Raise(nameof(IncrementalBackups)); settingsLoaded = true;
+            }
             codexHookStatus = data.CodexHook; claudeHookStatus = data.ClaudeHook; antigravityHookStatus = data.AntigravityHook; RaiseHookStatus();
             ProjectSummary = $"{data.Projects.Count(p => !p.Dismissed)} projects discovered · {data.Projects.Where(p => !p.Dismissed).Sum(p => p.Roots.Count)} source roots";
             RefreshProtection();
@@ -129,7 +136,7 @@ public sealed partial class MainViewModel
             // WPF selection bindings may emit null when their item sources are cleared.
             ScheduleEditor.PreserveDraft(() =>
             {
-                ScheduleDestinations.Clear(); foreach (var destination in data.Destinations) ScheduleDestinations.Add(destination);
+                ScheduleDestinations.Clear(); foreach (var destination in data.Destinations.Where(d => !d.IsRetired)) ScheduleDestinations.Add(destination);
                 ScheduleScopes.Clear(); ScheduleScopes.Add(new("All enabled projects", null));
                 foreach (var selection in data.Selections) ScheduleScopes.Add(new(selection.Name, selection));
                 Schedules.Clear(); foreach (var schedule in data.Schedules) Schedules.Add(schedule);
@@ -137,6 +144,9 @@ public sealed partial class MainViewModel
             });
             ScheduleEditor.DestinationId = destinationId ?? SelectedDestination?.Id ?? data.Destinations.FirstOrDefault()?.Id;
             ScheduleEditor.SelectionId = selectionId;
+            // Retirement overrides an old enabled draft. Resuming requires the user
+            // to choose an active repository and explicitly enable the schedule again.
+            if (data.Destinations.Any(d => d.IsRetired && d.Id == ScheduleEditor.DestinationId)) ScheduleEditor.Enabled = false;
             Raise(nameof(SelectedScheduleDestination)); Raise(nameof(SelectedScheduleScope));
             ScheduleLoad.Complete(request);
         }
@@ -152,7 +162,7 @@ public sealed partial class MainViewModel
         try
         {
             var result = await Task.Run(() => destination is null ? ("Choose a destination", "") :
-                (!Directory.Exists(destination.Path) ? "Drive unavailable" : destination.RepositoryId is null ? "Repository not initialized" : "Repository configured",
+                (destination.IsRetired ? "Replaced · history and key export only" : !Directory.Exists(destination.Path) ? "Drive unavailable" : destination.RepositoryId is null ? "Repository not initialized" : "Repository configured",
                 freeSpace(destination.Path) is { } space ? FormatBytes(space) + " free" : ""), request.Token);
             if (!destinationLoad.Accepts(request)) return;
             (destinationState, destinationFreeSpace) = result; destinationLoad.Complete(request);

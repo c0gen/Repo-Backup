@@ -8,6 +8,16 @@ public sealed partial class MainViewModel
 {
     private void InitializeProjectCommands()
     {
+        ResolveDuplicatesCommand = Command(async () =>
+        {
+            var project = SelectedProject!.Project;
+            if (!dialogs.Confirm("Keep the exclusions shown for " + project.Name + " and merge the other entries for these same source folders? Backup history and saved selections will be retained.")) return;
+            await OperateAsync(async token =>
+            {
+                await Task.Run(() => Services.Catalog.ResolveDuplicateProjects(project.Id), token);
+                StatusMessage = "Duplicate project settings resolved. History and saved selections are connected.";
+            });
+        }, () => SelectedProject?.Project.IdentityConflict == true && CanEditCatalog);
         RefreshCommand = Command(RefreshAsync);
         AddFolderCommand = Command(async () =>
         {
@@ -62,10 +72,11 @@ public sealed partial class MainViewModel
         {
             if (SelectedProject is null) return;
             var current = ActiveSelection?.Selection?.Exclusions ?? SelectedProject.Project.Exclusions;
-            var dialog = new ExclusionsDialog(current) { Owner = dialogs.Owner };
+            var dialog = new ExclusionsDialog(current, ActiveSelection?.Selection?.PatternBase ?? ExclusionPatternBase.ProjectRoot,
+                ActiveSelection?.Selection is null ? null : SelectedProject.Project.Exclusions) { Owner = dialogs.Owner };
             if (dialog.ShowDialog() == true)
             {
-                if (ActiveSelection?.Selection is { } selection) Services.Catalog.SaveSelection(selection with { Exclusions = dialog.Rules });
+                if (ActiveSelection?.Selection is { } selection) Services.Catalog.SaveSelection(selection with { Exclusions = dialog.Rules, PatternBase = dialog.PatternBase });
                 else Services.Catalog.SaveProject(SelectedProject.Project with { Exclusions = dialog.Rules });
                 await ReloadAsync(); _ = UpdatePreviewAsync();
             }

@@ -6,13 +6,17 @@ namespace RepoBackup.Core.Storage;
 
 public sealed partial class CatalogStore
 {
-    public const int SchemaVersion = 2;
+    public const int SchemaVersion = 4;
 
     private void InitializeSchema()
     {
         using var db = Open();
         using var command = db.CreateCommand();
         command.CommandText = "PRAGMA journal_mode=WAL"; command.ExecuteNonQuery();
+        command.CommandText = "PRAGMA user_version";
+        var observedVersion = Convert.ToInt32(command.ExecuteScalar());
+        if (observedVersion is < 0 or > SchemaVersion) throw new InvalidDataException("Unsupported catalog schema. Existing catalog has been preserved.");
+        BackupBeforeMigration(db, observedVersion);
         // Immediate transactions serialize schema changes and registration across processes.
         using var transaction = db.BeginTransaction(deferred: false); command.Transaction = transaction;
         command.CommandText = "PRAGMA user_version";
@@ -39,9 +43,10 @@ public sealed partial class CatalogStore
         {
             command.CommandText = "INSERT INTO projects SELECT id,external_id,payload FROM projects_v1; DROP TABLE projects_v1;";
             command.ExecuteNonQuery();
-            foreach (var project in ReadAll<ProjectEntry>(db, "projects", transaction))
-                WriteProject(db, transaction, ProjectIdentity.Normalize(project));
         }
-        command.CommandText = "PRAGMA user_version=2"; command.ExecuteNonQuery(); transaction.Commit();
+        command.CommandText = "DROP TABLE project_roots; CREATE TABLE project_roots (path TEXT COLLATE NOCASE NOT NULL, project_id TEXT NOT NULL, root_id TEXT NOT NULL, PRIMARY KEY(path, project_id, root_id))";
+        command.ExecuteNonQuery();
+        ReconcileIdentities(db, transaction);
+        command.CommandText = "PRAGMA user_version=4"; command.ExecuteNonQuery(); transaction.Commit();
     }
 }

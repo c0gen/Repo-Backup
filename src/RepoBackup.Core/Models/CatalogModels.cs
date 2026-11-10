@@ -4,9 +4,11 @@ public enum Coverage { FullProject, PartialSelection }
 public enum SourceKind { Project, Worktree, GitMetadata }
 public enum Outcome { NotRun, Running, Successful, Failed, Incomplete, Cancelled, Interrupted }
 public enum DestinationProtection { RecoveryKey, PasswordFree }
+public enum ExclusionPatternBase { SelectedSource, ProjectRoot }
 
 public sealed record SourceRoot(string Id, string Path)
 {
+    public List<string> LegacyIds { get; init; } = [];
     public List<string> PreviousPaths { get; init; } = [];
     public List<string> Aliases { get; init; } = [];
 }
@@ -15,6 +17,8 @@ public sealed record DiscoverySource(string ProviderId, string? ExternalId = nul
 
 public sealed record ProjectEntry
 {
+    public List<string> LegacyIds { get; init; } = [];
+    public bool IdentityConflict { get; init; }
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string? ExternalId { get; init; }
     public string Name { get; init; } = "Project";
@@ -37,11 +41,18 @@ public sealed record ExclusionRules
 
 public sealed record SavedSelection
 {
+    public static SavedSelection FromProject(ProjectEntry project, string name, IEnumerable<string> paths) => new()
+    {
+        ProjectId = project.Id, Name = name, Paths = paths.ToList(), PatternBase = ExclusionPatternBase.ProjectRoot,
+        Exclusions = project.Exclusions with { ExcludedDirectories = [.. project.Exclusions.ExcludedDirectories], RelativePatterns = [.. project.Exclusions.RelativePatterns] }
+    };
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public required string ProjectId { get; init; }
     public required string Name { get; init; }
     public List<string> Paths { get; init; } = [];
     public ExclusionRules Exclusions { get; init; } = new();
+    // Missing in legacy payloads: keep their selection-relative interpretation.
+    public ExclusionPatternBase PatternBase { get; init; } = ExclusionPatternBase.SelectedSource;
 }
 
 public sealed record Destination
@@ -53,6 +64,9 @@ public sealed record Destination
     public DestinationProtection Protection { get; init; } = DestinationProtection.RecoveryKey;
     public string? RepositoryId { get; init; }
     public DateTimeOffset? VerifiedAt { get; init; }
+    public bool IsRetired { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DisplayName => Name + (IsRetired ? " (replaced — history only)" : "");
 }
 
 public sealed record JobRecord
@@ -71,7 +85,13 @@ public sealed record JobRecord
     public string? SnapshotId { get; init; }
     public long Files { get; init; }
     public long Bytes { get; init; }
+    public BackupReadMode? ReadMode { get; init; }
+    public string? ParentSnapshotId { get; init; }
+    public DateTimeOffset? LastFullReadAt { get; init; }
+    public Dictionary<string, double> PhaseMilliseconds { get; init; } = [];
     public List<string> Messages { get; init; } = [];
+    public List<BackupIssue> Issues { get; init; } = [];
+    public SourceChangeSummary? SourceChanges { get; init; }
     public int OwnerProcessId { get; init; } = Environment.ProcessId;
     public long OwnerStartTicks { get; init; } = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
 }

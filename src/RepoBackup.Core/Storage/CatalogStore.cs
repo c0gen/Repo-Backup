@@ -53,9 +53,19 @@ public sealed partial class CatalogStore
     }
 
     public List<ProjectEntry> Projects() => ReadAll<ProjectEntry>("projects").OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    public JobRecord? Job(string id)
+    {
+        using var db = Open(); using var command = db.CreateCommand();
+        command.CommandText = "SELECT payload FROM history WHERE id=$id"; command.Parameters.AddWithValue("$id", id);
+        return command.ExecuteScalar() is string json ? ResolveJob(Json.Read<JobRecord>(json), Projects()) : null;
+    }
     public List<SavedSelection> Selections() => ReadAll<SavedSelection>("selections");
     public List<Destination> Destinations() => ReadAll<Destination>("destinations");
-    public List<JobRecord> History() => ReadAll<JobRecord>("history").OrderByDescending(h => h.StartedAt).ToList();
+    public List<JobRecord> History()
+    {
+        var projects = Projects();
+        return ReadAll<JobRecord>("history").Select(j => ResolveJob(j, projects)).OrderByDescending(h => h.StartedAt).ToList();
+    }
     public List<ScheduleDefinition> Schedules() => GetSetting<List<ScheduleDefinition>>("schedules") ?? [];
     public void SaveSelection(SavedSelection value) => Save("selections", value.Id, value);
     public void SaveDestination(Destination value) => Save("destinations", value.Id, value);
